@@ -99,6 +99,20 @@ def train(
     device: torch.device,
     cache_positions: list[str] | None = None,
 ) -> None:
+    # Device check at start of training
+    print(f"Train function device check:")
+    print(f"  Target device: {device}")
+    print(f"  tlens_model device: {next(model.tlens_model.parameters()).device}")
+    
+    # Check each SAE module device
+    for name, sae_module in model.saes.named_modules():
+        if hasattr(sae_module, 'parameters') and len(list(sae_module.parameters())) > 0:
+            param_device = next(sae_module.parameters()).device
+            print(f"  SAE {name} device: {param_device}")
+            if param_device != device:
+                print(f"  ERROR: SAE {name} on wrong device! Force-moving to {device}")
+                sae_module.to(device)
+    
     model.saes.train()
 
     # TODO: Handling end-to-end training

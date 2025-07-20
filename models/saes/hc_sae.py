@@ -153,6 +153,12 @@ class HardConcreteSAE(BaseSAE):
             l: The lower stretch limit used.
             r: The upper stretch limit used.
         """
+        # Ensure input is on same device as module
+        module_device = next(self.parameters()).device
+        if x.device != module_device:
+            print(f"HardConcreteSAE: Moving input from {x.device} to {module_device}")
+            x = x.to(module_device)
+        
         # Get encoder output
         encoder_out = self.encoder(x)
         
