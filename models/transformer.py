@@ -61,12 +61,19 @@ class SAETransformer(torch.nn.Module):
         self.saes = torch.nn.ModuleDict()
         
         # Set device context for SAE creation to match tlens_model device
-        with torch.cuda.device(model_device) if model_device.type == 'cuda' else torch.device(model_device):
-            for i in range(len(self.all_sae_positions)):
-                input_size = self.hook_shapes[self.raw_sae_positions[i]][-1]
+        if model_device.type == 'cuda':
+            with torch.cuda.device(model_device):
+                self._create_sae_modules(sae_config)
+        else:
+            self._create_sae_modules(sae_config)
+    
+    def _create_sae_modules(self, sae_config: SAEConfig):
+        """Create SAE modules with proper device context."""
+        for i in range(len(self.all_sae_positions)):
+            input_size = self.hook_shapes[self.raw_sae_positions[i]][-1]
 
-                # TODO: Make this into a factory function.
-                if isinstance(sae_config, HardConcreteSAEConfig):
+            # TODO: Make this into a factory function.
+            if isinstance(sae_config, HardConcreteSAEConfig):
                 self.saes[self.all_sae_positions[i]] = HardConcreteSAE(
                     input_size=input_size,
                     n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
