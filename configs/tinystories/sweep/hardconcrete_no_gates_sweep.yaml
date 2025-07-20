@@ -1,5 +1,1 @@
-# Hard Concrete SAE (No Learned Gates) Hyperparameter Sweep Configuration
-# Parameters for Hard Concrete SAE training without learnable gate mechanism
-saes:
-  sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]
-  input_dependent_gates: [false]
+sparsity_coeff: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]
