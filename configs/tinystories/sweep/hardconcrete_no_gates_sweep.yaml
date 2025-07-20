@@ -1,31 +1,4 @@
 # Hard Concrete SAE (No Learned Gates) Hyperparameter Sweep Configuration
 # Parameters for Hard Concrete SAE training without learnable gate mechanism
 
-# Learning rate sweep
-learning_rates: [1e-4, 3e-4, 1e-3, 3e-3]
-
-# Sparsity coefficient sweep
-sparsity_coeffs: [0.01, 0.03, 0.1, 0.3]
-
-# Dictionary size ratios
-dict_size_ratios: [16.0, 32.0, 64.0]
-
-# Training parameters
-gradient_accumulation_steps: [20, 40]
-warmup_samples: [20_000, 40_000]
-
-# Data parameters
-n_train_samples: [50_000, 100_000, 200_000]
-train_batch_size: [20, 40]
-
-# Hard Concrete SAE specific parameters (reduced set for no-gates variant)
-sae_specific:
-  # Initial beta values for concrete distribution
-  initial_betas: [0.5, 1.0, 2.0]
-
-# Experiment limits
-max_experiments: 60
-
-# Note: This variant uses hard concrete gates but without learned gate parameters
-# Simpler than full hard concrete SAE, focuses on fixed gate behavior
-# initial_beta still controls the concrete distribution sharpness 
+sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]

@@ -2,4 +2,4 @@
 # Common parameters for ReLU SAE training
 
 # Sparsity coefficient sweep  
-sparsity_coeffs: [0.01, 0.03, 0.1, 0.3]
+sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]
