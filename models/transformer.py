@@ -48,6 +48,10 @@ class SAETransformer(torch.nn.Module):
     def __init__(self, tlens_model: HookedTransformer, sae_config: SAEConfig):
         super().__init__()
         self.tlens_model = tlens_model.eval()
+        
+        # Get device from tlens_model to ensure consistency
+        model_device = next(self.tlens_model.parameters()).device
+        
         self.raw_sae_positions = sae_config.sae_positions
         self.hook_shapes: dict[str, list[int]] = get_hook_shapes(
             self.tlens_model, self.raw_sae_positions
@@ -55,11 +59,14 @@ class SAETransformer(torch.nn.Module):
         # ModuleDict keys can't have periods in them, so we replace them with hyphens
         self.all_sae_positions = [name.replace(".", "-") for name in self.raw_sae_positions]
         self.saes = torch.nn.ModuleDict()
-        for i in range(len(self.all_sae_positions)):
-            input_size = self.hook_shapes[self.raw_sae_positions[i]][-1]
+        
+        # Set device context for SAE creation to match tlens_model device
+        with torch.cuda.device(model_device) if model_device.type == 'cuda' else torch.device(model_device):
+            for i in range(len(self.all_sae_positions)):
+                input_size = self.hook_shapes[self.raw_sae_positions[i]][-1]
 
-            # TODO: Make this into a factory function.
-            if isinstance(sae_config, HardConcreteSAEConfig):
+                # TODO: Make this into a factory function.
+                if isinstance(sae_config, HardConcreteSAEConfig):
                 self.saes[self.all_sae_positions[i]] = HardConcreteSAE(
                     input_size=input_size,
                     n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
