@@ -385,7 +385,8 @@ if __name__ == "__main__":
                 )
             print(f"Set CUDA device context to: {device} (validated)")
     else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Default to cuda:0 if available, but be explicit about it
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
     # Load config and apply any overrides
