@@ -125,7 +125,8 @@ class HardConcreteSAE(BaseSAE):
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
 
         # Register beta as a buffer to allow updates during training without being a model parameter
-        self.register_buffer("beta", torch.tensor(initial_beta))
+        # Use torch.tensor with current device context
+        self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32))
         self.l, self.r = stretch_limits
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
 

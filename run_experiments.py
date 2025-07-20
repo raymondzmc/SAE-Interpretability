@@ -562,33 +562,21 @@ def main():
         return
     
     # Save experiment configs to temporary directory
-    temp_dir = Path("temp_experiment_configs")
-    config_paths = save_experiment_configs(experiment_configs, temp_dir)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(exist_ok=True)
+    save_experiment_configs(experiment_configs, output_dir)
+    logger.info(f"Saved experiment configs to {output_dir} for inspection")
+
+    # Run experiments
+    start_time = time.time()
+    logger.info("Starting experiment execution...")
     
-    # Optional: Save configs to output directory for inspection
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(exist_ok=True)
-        save_experiment_configs(experiment_configs, output_dir)
-        logger.info(f"Saved experiment configs to {output_dir} for inspection")
+    results = run_experiments_on_devices(output_dir, device_ids, sequential=args.sequential, use_tmux=use_tmux)
     
-    try:
-        # Run experiments
-        start_time = time.time()
-        logger.info("Starting experiment execution...")
-        
-        results = run_experiments_on_devices(config_paths, device_ids, sequential=args.sequential, use_tmux=use_tmux)
-        
-        total_duration = time.time() - start_time
-        
-        # Print comprehensive summary
-        print_experiment_summary(results, device_ids, total_duration)
-        
-    finally:
-        # Clean up temporary files
-        if temp_dir.exists():
-            logger.info("Cleaning up temporary config files...")
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    total_duration = time.time() - start_time
+    
+    # Print comprehensive summary
+    print_experiment_summary(results, device_ids, total_duration)
 
 
 if __name__ == "__main__":
