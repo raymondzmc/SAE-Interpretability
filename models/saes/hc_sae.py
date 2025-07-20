@@ -125,8 +125,8 @@ class HardConcreteSAE(BaseSAE):
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
 
         # Register beta as a buffer to allow updates during training without being a model parameter
-        # Use torch.tensor with current device context
-        self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32))
+        # Create on CPU first, will be moved to correct device by .to() call
+        self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
         self.l, self.r = stretch_limits
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
 
@@ -153,6 +153,11 @@ class HardConcreteSAE(BaseSAE):
             l: The lower stretch limit used.
             r: The upper stretch limit used.
         """
+        # Debug: Check device consistency
+        print(f"Input tensor device: {x.device}")
+        print(f"Encoder weight device: {self.encoder.weight.device}")
+        print(f"Beta buffer device: {self.beta.device}")
+        
         # Get encoder output
         encoder_out = self.encoder(x)
         

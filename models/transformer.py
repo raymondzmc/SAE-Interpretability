@@ -165,6 +165,9 @@ class SAETransformer(torch.nn.Module):
         """
         super().to(*args, **kwargs)
         
+        # Explicitly move SAE modules to ensure device consistency
+        self.saes.to(*args, **kwargs)
+        
         # Handle HookedTransformer with special device handling
         if args and len(args) >= 1:
             # Extract device_or_dtype from first argument

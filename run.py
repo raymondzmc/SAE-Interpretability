@@ -336,6 +336,10 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
     tlens_model.to(device)
     cache_positions: list[str] | None = None
 
+    # Set device context again before SAE creation to ensure all new tensors use correct device
+    if device.type == 'cuda':
+        torch.cuda.set_device(device)
+    
     model = SAETransformer(
         tlens_model=tlens_model,
         sae_config=config.saes
