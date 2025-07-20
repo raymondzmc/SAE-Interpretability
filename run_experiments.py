@@ -209,7 +209,8 @@ def run_single_experiment(config_path: Path, device_id: str, use_tmux: bool = Tr
     """Run a single experiment on the specified device."""
     start_time = time.time()
     config_name = config_path.name
-    experiment_name = f"{config_name.replace('.yaml', '')}_{device_id.replace(':', '_')}"
+    timestamp = time.strftime("%H%M%S")  # HHMMSS format
+    experiment_name = f"{config_name.replace('.yaml', '')}_{device_id.replace(':', '_')}_{timestamp}"
     
     try:
         logger.info(f"[{device_id}] Starting experiment: {config_name}")
