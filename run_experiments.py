@@ -618,7 +618,7 @@ def main():
             print(f"Set CUDA device context to: {device} (validated)")
     else:
         # Default to cuda:0 if available, but be explicit about it  
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Save experiment configs to output directory with timestamps
@@ -630,8 +630,7 @@ def main():
     start_time = time.time()
     for config in config_paths:
         # Convert device string to torch.device object if specified
-        device_obj = torch.device(args.device) if args.device else None
-        run(config, device=device_obj)
+        run(config, device=device)
     total_duration = time.time() - start_time
     logger.info(f"Total duration: {total_duration:.1f}s ({total_duration/60:.1f} minutes)")
     
