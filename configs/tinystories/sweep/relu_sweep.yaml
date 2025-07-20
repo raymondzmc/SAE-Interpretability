@@ -1,6 +1,4 @@
 # ReLU SAE Hyperparameter Sweep Configuration
-# Common parameters for ReLU SAE training
 
 # Sparsity coefficient sweep  
-saes:
-  sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]
+sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]

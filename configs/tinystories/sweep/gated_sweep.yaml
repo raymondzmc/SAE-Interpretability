@@ -2,5 +2,17 @@
 # Parameters for Gated SAE training with auxiliary loss
 
 # Sparsity coefficient sweep
-saes:
-  sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]
+sparsity_coeffs: [0.01, 0.03, 0.1, 0.3, 1.0]
+
+# Learning rate sweep
+learning_rates: [1e-4, 3e-4, 1e-3]
+
+# Dictionary size ratios
+dict_size_ratios: [16.0, 32.0]
+
+# Gated SAE specific parameters
+sae_specific:
+  aux_coeffs: [0.01, 0.03125, 0.0625]
+
+# Experiment limit
+max_experiments: 45
