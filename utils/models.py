@@ -18,6 +18,11 @@ def get_hook_shapes(tlens_model: HookedTransformer, hook_names: list[str]) -> di
     # Create test prompt on the same device as the model
     model_device = next(tlens_model.parameters()).device
     test_prompt = torch.tensor([0], device=model_device)
+    
+    # Ensure model is in eval mode and on correct device
+    tlens_model.eval()
+    tlens_model.to(model_device)
+    
     tlens_model.run_with_hooks(
         test_prompt,
         return_type=None,

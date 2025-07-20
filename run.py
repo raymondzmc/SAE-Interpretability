@@ -332,20 +332,14 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
     tlens_model = load_tlens_model(
         tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path
     )
+    # Explicitly move tlens_model to target device BEFORE SAETransformer init
+    tlens_model.to(device)
     cache_positions: list[str] | None = None
 
     model = SAETransformer(
         tlens_model=tlens_model,
         sae_config=config.saes
     ).to(device=device)
-    
-    # Debug: Check device consistency
-    logger.info(f"Target device: {device}")
-    logger.info(f"tlens_model device: {next(model.tlens_model.parameters()).device}")
-    for name, sae_module in model.saes.named_modules():
-        if hasattr(sae_module, 'weight') or len(list(sae_module.parameters())) > 0:
-            param_device = next(sae_module.parameters()).device
-            logger.info(f"SAE {name} device: {param_device}")
 
     all_param_names = [name for name, _ in model.saes.named_parameters()]
     if config.saes.pretrained_sae_paths is not None:
@@ -379,6 +373,13 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default=None, help="Device to use (cuda/cpu/mps)")
     
     args = parser.parse_args()
+    
+    # Set device context IMMEDIATELY if specified, before any model loading
+    if args.device:
+        device = torch.device(args.device)
+        if device.type == 'cuda':
+            torch.cuda.set_device(device)
+            print(f"Set CUDA device context to: {device}")
     
     # Load config and apply any overrides
     config_path = Path(args.config_path)
