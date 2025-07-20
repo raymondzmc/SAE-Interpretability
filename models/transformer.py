@@ -47,7 +47,15 @@ class SAETransformer(torch.nn.Module):
 
     def __init__(self, tlens_model: HookedTransformer, sae_config: SAEConfig, device: torch.device | None = None):
         super().__init__()
-        self.tlens_model = tlens_model.eval().to(device)
+        # Ensure the model is moved to the correct device before using it
+        self.tlens_model = tlens_model.eval()
+        if device is not None:
+            self.tlens_model = self.tlens_model.to(device)
+            # Force garbage collection and clear CUDA cache to free memory from previous device
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
         self.raw_sae_positions = sae_config.sae_positions
         self.hook_shapes: dict[str, list[int]] = get_hook_shapes(
