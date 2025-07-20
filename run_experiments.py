@@ -19,6 +19,7 @@ import logging
 import copy
 import sys
 from itertools import product
+from run import run
 import tempfile
 
 # Set up logging
@@ -488,20 +489,20 @@ def main():
                         help="Base configuration file (e.g., configs/tinystories-gated.yaml)")
     parser.add_argument("--sweep_config", type=str, required=True,
                         help="Sweep configuration file (e.g., sweep_configs/default_sweep.yaml)")
-    parser.add_argument("--devices", type=str, default="auto",
-                        help="Devices to use: 'auto' or comma-separated list (e.g., 'cuda:0,cuda:1,cpu')")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Device to use: 'cuda:0', 'cuda:1', 'cpu', etc.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Show experiment configurations and device distribution without running")
     parser.add_argument("--show_devices", action="store_true",
                         help="Just show available devices and exit")
     parser.add_argument("--limit", type=int, default=None,
                         help="Override max_experiments from sweep config")
-    parser.add_argument("--output_dir", type=str, default="experiment_outputs",
+    parser.add_argument("--output_dir", type=str, default=None,
                         help="Directory to save experiment configs (for inspection)")
-    parser.add_argument("--sequential", action="store_true",
-                        help="Run experiments sequentially (no multiprocessing) for easier debugging")
-    parser.add_argument("--no_tmux", action="store_true",
-                        help="Disable tmux sessions (use direct subprocess calls instead)")
+    # parser.add_argument("--sequential", action="store_true",
+    #                     help="Run experiments sequentially (no multiprocessing) for easier debugging")
+    # parser.add_argument("--no_tmux", action="store_true",
+    #                     help="Disable tmux sessions (use direct subprocess calls instead)")
     
     args = parser.parse_args()
     
@@ -548,46 +549,36 @@ def main():
         config = create_experiment_config(base_config, params, i)
         experiment_configs.append(config)
     
-    # Parse device specification
-    device_ids = parse_device_list(args.devices)
-    logger.info(f"Using devices: {device_ids}")
-    
     # Check tmux availability
-    use_tmux = not args.no_tmux
-    if use_tmux:
-        try:
-            subprocess.run(["tmux", "-V"], capture_output=True, check=True)
-            logger.info("Tmux available - experiments will run in separate tmux sessions")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            logger.warning("Tmux not available - falling back to direct subprocess calls")
-            use_tmux = False
-    else:
-        logger.info("Tmux disabled - using direct subprocess calls")
+    # use_tmux = not args.no_tmux
+    # if use_tmux:
+    #     try:
+    #         subprocess.run(["tmux", "-V"], capture_output=True, check=True)
+    #         logger.info("Tmux available - experiments will run in separate tmux sessions")
+    #     except (subprocess.CalledProcessError, FileNotFoundError):
+    #         logger.warning("Tmux not available - falling back to direct subprocess calls")
+    #         use_tmux = False
+    # else:
+    #     logger.info("Tmux disabled - using direct subprocess calls")
     
-    if not device_ids:
-        raise ValueError("No devices available or specified")
+    # print(f"\nExperiment Overview:")
+    # print(f"  Base config: {base_config_path}")
+    # print(f"  Sweep config: {sweep_config_path}")
+    # print(f"  SAE type: {sae_type}")
+    # print(f"  Total experiments: {len(experiment_configs)}")
+    # print(f"  Tmux sessions: {'enabled' if use_tmux else 'disabled'}")
     
-    print(f"\nExperiment Overview:")
-    print(f"  Base config: {base_config_path}")
-    print(f"  Sweep config: {sweep_config_path}")
-    print(f"  SAE type: {sae_type}")
-    print(f"  Total experiments: {len(experiment_configs)}")
-    print(f"  Devices: {device_ids}")
-    print(f"  Tmux sessions: {'enabled' if use_tmux else 'disabled'}")
-    
-    if use_tmux and not args.dry_run:
-        print(f"\n📺 Experiment Monitoring:")
-        print(f"  Each experiment runs in its own tmux session")
-        print(f"  Session names: exp_experiment_XXX_device")
-        print(f"  Monitor individual experiments: tmux attach -t <session_name>")
-        print(f"  List all sessions: tmux list-sessions")
-        print(f"  Kill a session: tmux kill-session -t <session_name>")
+    # if use_tmux and not args.dry_run:
+    #     print(f"\n📺 Experiment Monitoring:")
+    #     print(f"  Each experiment runs in its own tmux session")
+    #     print(f"  Session names: exp_experiment_XXX_device")
+    #     print(f"  Monitor individual experiments: tmux attach -t <session_name>")
+    #     print(f"  List all sessions: tmux list-sessions")
+    #     print(f"  Kill a session: tmux kill-session -t <session_name>")
     
     if args.dry_run:
         print(f"\nDevice distribution (dry run):")
-        for i, device_id in enumerate(device_ids):
-            device_experiments = [c for j, c in enumerate(experiment_configs) if j % len(device_ids) == i]
-            print(f"  {device_id}: {len(device_experiments)} experiments")
+        print(f"  {args.device}: {len(experiment_configs)} experiments")
         
         print(f"\nAll experiment configurations:")
         for i, config in enumerate(experiment_configs):
@@ -612,16 +603,45 @@ def main():
     config_paths = save_experiment_configs(experiment_configs, output_dir)
     logger.info(f"Saved {len(config_paths)} experiment configs to {output_dir} with timestamps")
 
-    # Run experiments
+    if args.device:
+        device = torch.device(args.device)
+        if device.type == 'cuda':
+            # Validate CUDA device exists
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA is not available on this system")
+            num_devices = torch.cuda.device_count()
+            if device.index is None:
+                device_index = 0
+            else:
+                device_index = device.index
+                
+            if device_index >= num_devices:
+                available_devices = [f"cuda:{i}" for i in range(num_devices)]
+                raise RuntimeError(
+                    f"Invalid CUDA device {args.device}. "
+                    f"System has {num_devices} CUDA device(s): {available_devices}"
+                )
+            print(f"Set CUDA device context to: {device} (validated)")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     start_time = time.time()
-    logger.info("Starting experiment execution...")
-    
-    results = run_experiments_on_devices(config_paths, device_ids, sequential=args.sequential, use_tmux=use_tmux)
-    
+    for config in experiment_configs:
+        run(config, device=args.device)
     total_duration = time.time() - start_time
+    logger.info(f"Total duration: {total_duration:.1f}s ({total_duration/60:.1f} minutes)")
     
-    # Print comprehensive summary
-    print_experiment_summary(results, device_ids, total_duration)
+    # Run experiments
+    # start_time = time.time()
+    # logger.info("Starting experiment execution...")
+    
+    # results = run_experiments_on_devices(config_paths, device_ids, sequential=args.sequential, use_tmux=use_tmux)
+    
+    # total_duration = time.time() - start_time
+    
+    # # Print comprehensive summary
+    # print_experiment_summary(results, device_ids, total_duration)
 
 
 if __name__ == "__main__":

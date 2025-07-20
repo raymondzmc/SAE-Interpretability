@@ -45,12 +45,9 @@ class SAETransformer(torch.nn.Module):
         sae_config: Configurations for the SAEs.
     """
 
-    def __init__(self, tlens_model: HookedTransformer, sae_config: SAEConfig):
+    def __init__(self, tlens_model: HookedTransformer, sae_config: SAEConfig, device: torch.device | None = None):
         super().__init__()
-        self.tlens_model = tlens_model.eval()
-        
-        # Get device from tlens_model to ensure consistency
-        model_device = next(self.tlens_model.parameters()).device
+        self.tlens_model = tlens_model.eval().to(device)
         
         self.raw_sae_positions = sae_config.sae_positions
         self.hook_shapes: dict[str, list[int]] = get_hook_shapes(
@@ -60,14 +57,9 @@ class SAETransformer(torch.nn.Module):
         self.all_sae_positions = [name.replace(".", "-") for name in self.raw_sae_positions]
         self.saes = torch.nn.ModuleDict()
         
-        # Set device context for SAE creation to match tlens_model device
-        if model_device.type == 'cuda':
-            with torch.cuda.device(model_device):
-                self._create_sae_modules(sae_config)
-        else:
-            self._create_sae_modules(sae_config)
+        self._create_sae_modules(sae_config)
     
-    def _create_sae_modules(self, sae_config: SAEConfig):
+    def _create_sae_modules(self, sae_config: SAEConfig, device: torch.device | None = None):
         """Create SAE modules with proper device context."""
         for i in range(len(self.all_sae_positions)):
             input_size = self.hook_shapes[self.raw_sae_positions[i]][-1]
@@ -82,7 +74,7 @@ class SAETransformer(torch.nn.Module):
                     stretch_limits=sae_config.hard_concrete_stretch_limits,
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
-                )
+                ).to(device)
             elif isinstance(sae_config, GatedSAEConfig):
                 self.saes[self.all_sae_positions[i]] = GatedSAE(
                     input_size=input_size,
@@ -90,7 +82,7 @@ class SAETransformer(torch.nn.Module):
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
                     aux_coeff=sae_config.aux_coeff,
-                )
+                ).to(device)
             elif isinstance(sae_config, GatedHardConcreteSAEConfig):
                 self.saes[self.all_sae_positions[i]] = GatedHardConcreteSAE(
                     input_size=input_size,
@@ -100,7 +92,7 @@ class SAETransformer(torch.nn.Module):
                     aux_coeff=sae_config.aux_coeff,
                     initial_beta=sae_config.initial_beta,
                     stretch_limits=sae_config.hard_concrete_stretch_limits,
-                )
+                ).to(device)
             else:
                 # Use ReLU SAE by default
                 self.saes[self.all_sae_positions[i]] = ReluSAE(
@@ -109,7 +101,7 @@ class SAETransformer(torch.nn.Module):
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
                     init_decoder_orthogonal=sae_config.init_decoder_orthogonal,
-                )
+                ).to(device)
 
     def forward(
         self,
@@ -187,6 +179,7 @@ class SAETransformer(torch.nn.Module):
         """
         # Move base class first
         super().to(*args, **kwargs)
+        self.saes.to(*args, **kwargs)
         
         # Determine target device
         target_device = None
@@ -204,7 +197,6 @@ class SAETransformer(torch.nn.Module):
             # Fallback for dtype-only moves
             self.tlens_model.to(*args, **kwargs)
             self.saes.to(*args, **kwargs)
-        
         return self
 
     @torch.inference_mode()

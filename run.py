@@ -99,13 +99,6 @@ def train(
     device: torch.device,
     cache_positions: list[str] | None = None,
 ) -> None:
-    # Ensure all SAE modules are on correct device
-    for name, sae_module in model.saes.named_modules():
-        if hasattr(sae_module, 'parameters') and len(list(sae_module.parameters())) > 0:
-            param_device = next(sae_module.parameters()).device
-            if param_device != device:
-                sae_module.to(device)
-    
     model.saes.train()
 
     # TODO: Handling end-to-end training
@@ -295,33 +288,7 @@ def train(
         wandb.finish()
 
 
-def run(config_path_or_obj: Path | str | Config, device_override: str | None = None) -> None:
-    # Set device context FIRST, before any model loading or tensor creation
-    if device_override:
-        device = torch.device(device_override)
-        # Set default CUDA device to avoid device mismatches - do this FIRST
-        if device.type == 'cuda':
-            # Validate CUDA device exists
-            if not torch.cuda.is_available():
-                raise RuntimeError("CUDA is not available on this system")
-            
-            num_devices = torch.cuda.device_count()
-            device_index = device.index if device.index is not None else 0
-                
-            if device_index >= num_devices:
-                available_devices = [f"cuda:{i}" for i in range(num_devices)]
-                raise RuntimeError(
-                    f"Invalid CUDA device {device_override}. "
-                    f"System has {num_devices} CUDA device(s): {available_devices}"
-                )
-            
-            torch.cuda.set_device(device_index)
- 
-    else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if device.type == 'cuda':
-            torch.cuda.set_device(0)  # Use default device
-    
+def run(config_path_or_obj: Path | str | Config, device: torch.device | None = None) -> None:
     config: Config = load_config(config_path_or_obj, config_model=Config)
     run_name = get_run_name(config)
     if config.wandb_project:
@@ -354,32 +321,14 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
     tlens_model = load_tlens_model(
         tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path
     )
-    
-    # Move tlens_model to target device
-    tlens_model = tlens_model.to(device)
-    cache_positions: list[str] | None = None
 
-    # Set device context for SAE creation
-    if device.type == 'cuda':
-        torch.cuda.set_device(device)
+    cache_positions: list[str] | None = None
     
     model = SAETransformer(
         tlens_model=tlens_model,
-        sae_config=config.saes
+        sae_config=config.saes,
+        device=device
     )
-    
-    # Move entire model to target device
-    model = model.to(device)
-    
-    # Ensure all components are on correct device
-    if next(model.tlens_model.parameters()).device != device:
-        model.tlens_model = model.tlens_model.to(device)
-    
-    for name, sae_module in model.saes.named_modules():
-        if hasattr(sae_module, 'weight') or len(list(sae_module.parameters())) > 0:
-            param_device = next(sae_module.parameters()).device
-            if param_device != device:
-                sae_module.to(device)
 
     all_param_names = [name for name, _ in model.saes.named_parameters()]
     if config.saes.pretrained_sae_paths is not None:
@@ -394,39 +343,16 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
 
     assert len(trainable_param_names) > 0, "No trainable parameters found."
     logger.info(f"Trainable parameters: {trainable_param_names}")
-    
-    # Final device verification before training
-    if next(model.tlens_model.parameters()).device != device:
-        model.tlens_model = model.tlens_model.to(device)
-    
-    for name, sae_module in model.saes.named_modules():
-        if hasattr(sae_module, 'parameters') and len(list(sae_module.parameters())) > 0:
-            param_device = next(sae_module.parameters()).device
-            if param_device != device:
-                sae_module.to(device)
-    
-    # Run training within device context to ensure consistency
-    if device.type == 'cuda':
-        with torch.cuda.device(device):
-            train(
-                config=config,
-                model=model,
-                train_loader=train_loader,
-                eval_loader=eval_loader,
-                trainable_param_names=trainable_param_names,
-                device=device,
-                cache_positions=cache_positions,
-            )
-    else:
-        train(
-            config=config,
-            model=model,
-            train_loader=train_loader,
-            eval_loader=eval_loader,
-            trainable_param_names=trainable_param_names,
-            device=device,
-            cache_positions=cache_positions,
-        )
+
+    train(
+        config=config,
+        model=model,
+        train_loader=train_loader,
+        eval_loader=eval_loader,
+        trainable_param_names=trainable_param_names,
+        device=device,
+        cache_positions=cache_positions,
+    )
 
 
 if __name__ == "__main__":
@@ -445,7 +371,6 @@ if __name__ == "__main__":
             # Validate CUDA device exists
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA is not available on this system")
-            
             num_devices = torch.cuda.device_count()
             if device.index is None:
                 device_index = 0
@@ -458,9 +383,10 @@ if __name__ == "__main__":
                     f"Invalid CUDA device {args.device}. "
                     f"System has {num_devices} CUDA device(s): {available_devices}"
                 )
-            
-            torch.cuda.set_device(device_index)
             print(f"Set CUDA device context to: {device} (validated)")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     
     # Load config and apply any overrides
     config_path = Path(args.config_path)
@@ -473,8 +399,6 @@ if __name__ == "__main__":
     print(f"Running training with config: {config_path}")
     print(f"SAE type: {config.saes.sae_type}")
     print(f"Wandb project: {config.wandb_project}")
-    if args.device:
-        print(f"Using device: {args.device}")
-    
+
     # Run training
-    run(config, device_override=args.device)
+    run(config, device=device)
