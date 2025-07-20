@@ -1,0 +1,35 @@
+# Gated Hard Concrete SAE Hyperparameter Sweep Configuration
+# Parameters for combined Gated + Hard Concrete SAE training
+
+# Learning rate sweep
+learning_rates: [1e-4, 3e-4, 1e-3, 3e-3]
+
+# Sparsity coefficient sweep
+sparsity_coeffs: [0.01, 0.03, 0.1, 0.3]
+
+# Dictionary size ratios
+dict_size_ratios: [16.0, 32.0, 64.0]
+
+# Training parameters
+gradient_accumulation_steps: [20, 40]
+warmup_samples: [20_000, 40_000]
+
+# Data parameters
+n_train_samples: [50_000, 100_000, 200_000]
+train_batch_size: [20, 40]
+
+# Combined SAE specific parameters
+sae_specific:
+  # Auxiliary loss coefficients (from Gated SAE)
+  aux_coeffs: [0.01, 0.03125, 0.0625, 0.125]
+  
+  # Initial beta values (from Hard Concrete SAE)
+  initial_betas: [0.3, 0.5, 1.0, 2.0]
+
+# Experiment limits  
+max_experiments: 100
+
+# Note: Gated Hard Concrete SAEs combine both mechanisms:
+# - aux_coeff: balances main and auxiliary losses from gating
+# - initial_beta: controls sharpness of concrete distribution for gates
+# This is the most complex SAE variant with the most hyperparameters 

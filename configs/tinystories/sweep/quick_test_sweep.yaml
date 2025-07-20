@@ -1,0 +1,36 @@
+# Quick Test Sweep Configuration
+# Minimal parameter set for fast testing and debugging
+
+# Small learning rate sweep
+learning_rates: [3e-4, 1e-3]
+
+# Basic sparsity sweep
+sparsity_coeffs: [0.03, 0.1]
+
+# Single dictionary size
+dict_size_ratios: [16.0]
+
+# Fast training parameters
+gradient_accumulation_steps: [20]
+warmup_samples: [5_000]
+
+# Small data parameters for quick runs
+n_train_samples: [5_000, 10_000]
+train_batch_size: [20]
+
+# Basic SAE-specific parameters for testing
+sae_specific:
+  # For gated SAEs
+  aux_coeffs: [0.03125]
+  
+  # For hard concrete SAEs
+  initial_betas: [0.5]
+  
+  # For hard concrete SAEs
+  input_dependent_gates: [true]
+
+# Very limited experiments for quick testing
+max_experiments: 8
+
+# Note: Use this config for quick validation of new SAE types or debugging
+# Should complete in minutes rather than hours 

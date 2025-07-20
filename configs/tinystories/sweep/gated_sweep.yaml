@@ -1,0 +1,30 @@
+# Gated SAE Hyperparameter Sweep Configuration  
+# Parameters for Gated SAE training with auxiliary loss
+
+# Learning rate sweep
+learning_rates: [1e-4, 3e-4, 1e-3, 3e-3]
+
+# Sparsity coefficient sweep
+sparsity_coeffs: [0.01, 0.03, 0.1, 0.3]
+
+# Dictionary size ratios
+dict_size_ratios: [16.0, 32.0, 64.0]
+
+# Training parameters
+gradient_accumulation_steps: [20, 40]
+warmup_samples: [20_000, 40_000]
+
+# Data parameters
+n_train_samples: [50_000, 100_000, 200_000]
+train_batch_size: [20, 40]
+
+# Gated SAE specific parameters
+sae_specific:
+  # Auxiliary loss coefficients for gating mechanism
+  aux_coeffs: [0.01, 0.03125, 0.0625, 0.125]
+
+# Experiment limits
+max_experiments: 60
+
+# Note: Gated SAEs use aux_coeff to balance main and auxiliary losses
+# Higher aux_coeff encourages more selective gating 
