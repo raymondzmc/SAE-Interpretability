@@ -328,6 +328,8 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
     tlens_model = load_tlens_model(
         tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path
     )
+    # Move tlens_model to device before SAETransformer initialization
+    tlens_model.to(device)
     cache_positions: list[str] | None = None
 
     model = SAETransformer(
