@@ -188,16 +188,20 @@ def create_experiment_config(base_config: Dict[str, Any], params: Dict[str, Any]
     return experiment_config
 
 
-def save_experiment_configs(configs: List[Dict[str, Any]], temp_dir: Path) -> List[Path]:
-    """Save experiment configs to temporary files and return paths."""
-    temp_dir.mkdir(exist_ok=True)
+def save_experiment_configs(configs: List[Dict[str, Any]], output_dir: Path) -> List[Path]:
+    """Save experiment configs with timestamps and return paths."""
+    output_dir.mkdir(exist_ok=True)
     config_paths = []
+    
+    # Create timestamp for this run
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
     
     for i, config in enumerate(configs):
         # Remove metadata before saving
         clean_config = {k: v for k, v in config.items() if not k.startswith('_')}
         
-        config_path = temp_dir / f"experiment_{i:03d}.yaml"
+        # Add timestamp to filename to avoid conflicts
+        config_path = output_dir / f"experiment_{timestamp}_{i:03d}.yaml"
         with open(config_path, 'w') as f:
             yaml.dump(clean_config, f, default_flow_style=False, sort_keys=False)
         config_paths.append(config_path)
@@ -561,17 +565,17 @@ def main():
         
         return
     
-    # Save experiment configs to temporary directory
+    # Save experiment configs to output directory with timestamps
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
-    save_experiment_configs(experiment_configs, output_dir)
-    logger.info(f"Saved experiment configs to {output_dir} for inspection")
+    config_paths = save_experiment_configs(experiment_configs, output_dir)
+    logger.info(f"Saved {len(config_paths)} experiment configs to {output_dir} with timestamps")
 
     # Run experiments
     start_time = time.time()
     logger.info("Starting experiment execution...")
     
-    results = run_experiments_on_devices(output_dir, device_ids, sequential=args.sequential, use_tmux=use_tmux)
+    results = run_experiments_on_devices(config_paths, device_ids, sequential=args.sequential, use_tmux=use_tmux)
     
     total_duration = time.time() - start_time
     
