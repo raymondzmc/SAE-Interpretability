@@ -468,6 +468,7 @@ class SAETransformer(torch.nn.Module):
         tlens_model = load_tlens_model(
             tlens_model_name=config["tlens_model_name"],
             tlens_model_path=config["tlens_model_path"],
+            device="cpu"  # Load to CPU first, then to target device in SAETransformer.__init__
         )
         model = cls(tlens_model=tlens_model, sae_config=create_sae_config(config["saes"]))
         model.saes.load_state_dict(torch.load(checkpoint_file, map_location="cpu"))

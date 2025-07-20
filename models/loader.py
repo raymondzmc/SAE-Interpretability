@@ -8,11 +8,15 @@ from utils.constants import CONFIG_FILE
 
 
 def load_tlens_model(
-    tlens_model_name: str | None, tlens_model_path: Path | None
+    tlens_model_name: str | None, tlens_model_path: Path | None, device: torch.device | None = None
 ) -> HookedTransformer:
     """Load transformerlens model from either HuggingFace or local path."""
     if tlens_model_name is not None:
-        tlens_model = HookedTransformer.from_pretrained(tlens_model_name)
+        # Load to CPU first to avoid default cuda:0 allocation
+        tlens_model = HookedTransformer.from_pretrained(tlens_model_name, device="cpu")
+        # Then move to target device if specified
+        if device is not None:
+            tlens_model = tlens_model.to(device)
     else:
         assert tlens_model_path is not None, "tlens_model_path is None."
         # Load the tlens_config
@@ -30,6 +34,10 @@ def load_tlens_model(
         hooked_transformer_config = HookedTransformerConfig(**config_data)
         tlens_model = HookedTransformer(hooked_transformer_config)
         tlens_model.load_state_dict(torch.load(tlens_model_path, map_location="cpu"))
+        
+        # Move to target device if specified
+        if device is not None:
+            tlens_model = tlens_model.to(device)
 
     assert tlens_model.tokenizer is not None
     return tlens_model

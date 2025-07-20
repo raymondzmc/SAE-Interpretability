@@ -319,7 +319,7 @@ def run(config_path_or_obj: Path | str | Config, device: torch.device | None = N
         global_seed=config.seed
     )
     tlens_model = load_tlens_model(
-        tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path
+        tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path, device=device
     )
 
     cache_positions: list[str] | None = None
