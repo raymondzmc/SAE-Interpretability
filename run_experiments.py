@@ -596,12 +596,6 @@ def main():
             print(f"  Experiment {i}: {', '.join(param_strs)}")
         
         return
-    
-    # Save experiment configs to output directory with timestamps
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True)
-    config_paths = save_experiment_configs(experiment_configs, output_dir)
-    logger.info(f"Saved {len(config_paths)} experiment configs to {output_dir} with timestamps")
 
     if args.device:
         device = torch.device(args.device)
@@ -626,8 +620,14 @@ def main():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Save experiment configs to output directory with timestamps
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(exist_ok=True)
+    config_paths = save_experiment_configs(experiment_configs, output_dir)
+    logger.info(f"Saved {len(config_paths)} experiment configs to {output_dir} with timestamps")
+
     start_time = time.time()
-    for config in experiment_configs:
+    for config in config_paths:
         run(config, device=args.device)
     total_duration = time.time() - start_time
     logger.info(f"Total duration: {total_duration:.1f}s ({total_duration/60:.1f} minutes)")
