@@ -156,7 +156,6 @@ class HardConcreteSAE(BaseSAE):
         # Ensure input is on same device as module
         module_device = next(self.parameters()).device
         if x.device != module_device:
-            print(f"HardConcreteSAE: Moving input from {x.device} to {module_device}")
             x = x.to(module_device)
         
         # Get encoder output

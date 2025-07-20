@@ -99,18 +99,11 @@ def train(
     device: torch.device,
     cache_positions: list[str] | None = None,
 ) -> None:
-    # Device check at start of training
-    print(f"Train function device check:")
-    print(f"  Target device: {device}")
-    print(f"  tlens_model device: {next(model.tlens_model.parameters()).device}")
-    
-    # Check each SAE module device
+    # Ensure all SAE modules are on correct device
     for name, sae_module in model.saes.named_modules():
         if hasattr(sae_module, 'parameters') and len(list(sae_module.parameters())) > 0:
             param_device = next(sae_module.parameters()).device
-            print(f"  SAE {name} device: {param_device}")
             if param_device != device:
-                print(f"  ERROR: SAE {name} on wrong device! Force-moving to {device}")
                 sae_module.to(device)
     
     model.saes.train()
@@ -348,14 +341,11 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
         tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path
     )
     
-    # Force move to exact device (not just "cuda")
-    print(f"Moving tlens_model from {next(tlens_model.parameters()).device} to {device}")
+    # Move tlens_model to target device
     tlens_model = tlens_model.to(device)
-    print(f"tlens_model now on: {next(tlens_model.parameters()).device}")
-    
     cache_positions: list[str] | None = None
 
-    # Set device context again before SAE creation
+    # Set device context for SAE creation
     if device.type == 'cuda':
         torch.cuda.set_device(device)
     
@@ -364,21 +354,17 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
         sae_config=config.saes
     )
     
-    # Force move entire model to exact device
-    print(f"Moving SAETransformer to {device}")
+    # Move entire model to target device
     model = model.to(device)
     
-    # Final verification and force correction if needed
-    print(f"Final verification - tlens_model device: {next(model.tlens_model.parameters()).device}")
+    # Ensure all components are on correct device
     if next(model.tlens_model.parameters()).device != device:
-        print(f"Force correcting tlens_model device")
         model.tlens_model = model.tlens_model.to(device)
     
     for name, sae_module in model.saes.named_modules():
         if hasattr(sae_module, 'weight') or len(list(sae_module.parameters())) > 0:
             param_device = next(sae_module.parameters()).device
             if param_device != device:
-                print(f"Force correcting SAE {name} from {param_device} to {device}")
                 sae_module.to(device)
 
     all_param_names = [name for name, _ in model.saes.named_parameters()]
@@ -395,24 +381,15 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
     assert len(trainable_param_names) > 0, "No trainable parameters found."
     logger.info(f"Trainable parameters: {trainable_param_names}")
     
-    # Final device check before training
-    print(f"Pre-training device check:")
-    print(f"  Target device: {device}")
-    print(f"  tlens_model device: {next(model.tlens_model.parameters()).device}")
-    
-    # Force move any components that are still on wrong device
+    # Final device verification before training
     if next(model.tlens_model.parameters()).device != device:
-        print(f"  Force-moving tlens_model to {device}")
         model.tlens_model = model.tlens_model.to(device)
     
     for name, sae_module in model.saes.named_modules():
         if hasattr(sae_module, 'parameters') and len(list(sae_module.parameters())) > 0:
             param_device = next(sae_module.parameters()).device
             if param_device != device:
-                print(f"  Force-moving SAE {name} to {device}")
                 sae_module.to(device)
-    
-    print(f"Device check complete. Starting training...")
     
     # Run training within device context to ensure consistency
     if device.type == 'cuda':

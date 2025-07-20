@@ -148,14 +148,12 @@ class SAETransformer(torch.nn.Module):
                 if position in sae_positions:
                     sae = self.saes[position.replace(".", "-")]
                     
-                    # Debug: Check device consistency before SAE forward pass
+                    # Auto-correct device mismatches
                     input_device = x.device
                     sae_device = next(sae.parameters()).device
                     if input_device != sae_device:
-                        print(f"DEVICE MISMATCH in {position}: input on {input_device}, SAE on {sae_device}")
-                        # Force move SAE to input device
+                        # Silently move SAE to input device
                         sae.to(input_device)
-                        print(f"Moved SAE {position} to {input_device}")
                     
                     sae_output = sae(x.detach().clone())
                     sae_outputs[position] = sae_output
