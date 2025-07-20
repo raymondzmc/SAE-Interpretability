@@ -1,0 +1,51 @@
+# Experiment Settings
+wandb_project: tinystories-1m
+wandb_run_name: null
+wandb_tags: ["hardconcrete", "no_learned_gates"]
+seed: 42
+
+# Model Configuration  
+tlens_model_name: "roneneldan/TinyStories-1M" 
+tlens_model_path: null
+
+# Training Configuration
+save_every_n_samples: null
+eval_every_n_samples: 40_000
+gradient_accumulation_steps: 20
+lr: 1e-3
+lr_schedule: cosine
+min_lr_factor: 0.1
+warmup_samples: 20_000
+max_grad_norm: 1.0
+log_every_n_grad_steps: 20
+
+# Data Configuration
+data:
+  dataset_name: "apollo-research/Skylion007-openwebtext-tokenizer-gpt2"
+  tokenizer_name: "roneneldan/TinyStories"
+  context_length: 1024
+  n_train_samples: 400_000
+  n_eval_samples: 500
+  train_batch_size: 20
+  eval_batch_size: 20
+  streaming: true
+  seed: null
+  is_tokenized: true
+  column_name: "input_ids"
+  split: "train"
+
+# SAE Configuration - Hard Concrete SAE without learned gates
+saes:
+  name: "hardconcrete_sae_no_learned_gates"
+  sae_type: "hard_concrete"
+  dict_size_to_input_ratio: 50.0
+  pretrained_sae_paths: null
+  retrain_saes: false
+  sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre"]
+  init_decoder_orthogonal: true
+  sparsity_coeff: 0.1
+  initial_beta: 1.0
+  final_beta: null
+  beta_annealing: false
+  hard_concrete_stretch_limits: [-0.1, 1.1]
+  input_dependent_gates: false 
