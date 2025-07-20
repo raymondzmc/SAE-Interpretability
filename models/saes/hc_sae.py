@@ -153,11 +153,6 @@ class HardConcreteSAE(BaseSAE):
             l: The lower stretch limit used.
             r: The upper stretch limit used.
         """
-        # Debug: Check device consistency
-        print(f"Input tensor device: {x.device}")
-        print(f"Encoder weight device: {self.encoder.weight.device}")
-        print(f"Beta buffer device: {self.beta.device}")
-        
         # Get encoder output
         encoder_out = self.encoder(x)
         
