@@ -340,10 +340,24 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
     if device.type == 'cuda':
         torch.cuda.set_device(device)
     
+    print(f"Creating SAETransformer with tlens_model device: {next(tlens_model.parameters()).device}")
+    print(f"Target device for SAETransformer: {device}")
+    
     model = SAETransformer(
         tlens_model=tlens_model,
         sae_config=config.saes
     ).to(device=device)
+    
+    # Verify all components are on the correct device
+    print(f"SAETransformer tlens_model device after creation: {next(model.tlens_model.parameters()).device}")
+    for name, sae_module in model.saes.named_modules():
+        if hasattr(sae_module, 'weight') or len(list(sae_module.parameters())) > 0:
+            param_device = next(sae_module.parameters()).device
+            print(f"SAE {name} device: {param_device}")
+            if param_device != device:
+                print(f"WARNING: SAE {name} is on {param_device}, expected {device}")
+                # Force move to correct device
+                sae_module.to(device)
 
     all_param_names = [name for name, _ in model.saes.named_parameters()]
     if config.saes.pretrained_sae_paths is not None:

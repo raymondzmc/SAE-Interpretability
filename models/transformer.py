@@ -51,6 +51,7 @@ class SAETransformer(torch.nn.Module):
         
         # Get device from tlens_model to ensure consistency
         model_device = next(self.tlens_model.parameters()).device
+        print(f"SAETransformer.__init__: tlens_model device = {model_device}")
         
         self.raw_sae_positions = sae_config.sae_positions
         self.hook_shapes: dict[str, list[int]] = get_hook_shapes(
