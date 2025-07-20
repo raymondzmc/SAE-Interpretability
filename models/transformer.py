@@ -51,7 +51,6 @@ class SAETransformer(torch.nn.Module):
         
         # Get device from tlens_model to ensure consistency
         model_device = next(self.tlens_model.parameters()).device
-        print(f"SAETransformer.__init__: tlens_model device = {model_device}")
         
         self.raw_sae_positions = sae_config.sae_positions
         self.hook_shapes: dict[str, list[int]] = get_hook_shapes(
@@ -178,23 +177,27 @@ class SAETransformer(torch.nn.Module):
     def to(self, *args: Any, **kwargs: Any) -> "SAETransformer":
         """Move the model to the specified device/dtype.
         """
+        # Move base class first
         super().to(*args, **kwargs)
         
-        # Explicitly move SAE modules to ensure device consistency
-        self.saes.to(*args, **kwargs)
-        
-        # Handle HookedTransformer with special device handling
+        # Determine target device
+        target_device = None
         if args and len(args) >= 1:
-            # Extract device_or_dtype from first argument
-            device_or_dtype = args[0]
-            self.tlens_model.to(device_or_dtype)
+            target_device = args[0]
         elif 'device' in kwargs:
-            self.tlens_model.to(kwargs['device'])
-        elif 'dtype' in kwargs:
-            self.tlens_model.to(kwargs['dtype'])
+            target_device = kwargs['device']
+        
+        # Force move tlens_model and SAEs to exact device
+        if target_device is not None:
+            print(f"SAETransformer.to(): Moving to {target_device}")
+            # Use assignment to ensure the reference is updated
+            self.tlens_model = self.tlens_model.to(target_device)
+            self.saes = self.saes.to(target_device)
         else:
-            # Fall back to passing all args/kwargs to tlens_model
+            # Fallback for dtype-only moves
             self.tlens_model.to(*args, **kwargs)
+            self.saes.to(*args, **kwargs)
+        
         return self
 
     @torch.inference_mode()
