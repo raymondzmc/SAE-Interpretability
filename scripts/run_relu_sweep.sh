@@ -5,3 +5,9 @@ tmux new-session -d -s "relu_sweep" "python run_experiments.py \
 --sweep_config configs/tinystories/sweep/relu_sweep.yaml \
 --output_dir experiment_outputs/tinystories-relu-sweep \
 --device cuda:1"
+
+
+CUDA_VISIBLE_DEVICES=1 python run_experiments.py \
+--base_config configs/tinystories/tinystories-relu.yaml \
+--sweep_config configs/tinystories/sweep/relu_sweep.yaml \
+--output_dir experiment_outputs/tinystories-relu-sweep

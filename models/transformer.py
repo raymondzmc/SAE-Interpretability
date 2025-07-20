@@ -57,7 +57,7 @@ class SAETransformer(torch.nn.Module):
         self.all_sae_positions = [name.replace(".", "-") for name in self.raw_sae_positions]
         self.saes = torch.nn.ModuleDict()
         
-        self._create_sae_modules(sae_config)
+        self._create_sae_modules(sae_config, device)
     
     def _create_sae_modules(self, sae_config: SAEConfig, device: torch.device | None = None):
         """Create SAE modules with proper device context."""
@@ -293,7 +293,8 @@ class SAETransformer(torch.nn.Module):
 
             assert isinstance(tokens, torch.Tensor)
             batch_size = tokens.shape[0]
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Use the device the model is currently on instead of defaulting to cuda:0
+            device = next(self.tlens_model.parameters()).device
             tokens = tokens.to(device)
 
             stop_tokens = []
