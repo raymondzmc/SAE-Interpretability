@@ -326,8 +326,50 @@ def run_single_experiment(config_path: Path, device_id: str, use_tmux: bool = Tr
         return config_name, -2, f"Error on {device_id}: {e}"
 
 
+def validate_cuda_devices(devices: List[str]) -> None:
+    """Validate that all CUDA devices exist on the system."""
+    if not torch.cuda.is_available():
+        cuda_devices = [d for d in devices if d.startswith('cuda')]
+        if cuda_devices:
+            raise RuntimeError("CUDA devices specified but CUDA is not available on this system")
+        return
+    
+    num_devices = torch.cuda.device_count()
+    available_devices = [f"cuda:{i}" for i in range(num_devices)]
+    
+    for device in devices:
+        if device.startswith('cuda'):
+            if ':' in device:
+                try:
+                    device_index = int(device.split(':')[1])
+                except ValueError:
+                    raise RuntimeError(f"Invalid device format: {device}")
+            else:
+                device_index = 0
+            
+            if device_index >= num_devices:
+                raise RuntimeError(
+                    f"Invalid CUDA device {device}. "
+                    f"System has {num_devices} CUDA device(s): {available_devices}"
+                )
+    
+    logger.info(f"Validated devices: {devices}")
+
+
+def list_available_devices() -> List[str]:
+    """List all available CUDA devices on the system."""
+    devices = ['cpu']
+    if torch.cuda.is_available():
+        num_devices = torch.cuda.device_count()
+        devices.extend([f"cuda:{i}" for i in range(num_devices)])
+    return devices
+
+
 def run_experiments_on_devices(config_paths: List[Path], device_ids: List[str], sequential: bool = False, use_tmux: bool = True) -> List[tuple[str, int, str]]:
     """Run experiments distributed across multiple devices."""
+    # Validate all devices before starting any experiments
+    validate_cuda_devices(device_ids)
+    
     results = []
     
     # Create device-config pairs by cycling through devices

@@ -301,12 +301,26 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
         device = torch.device(device_override)
         # Set default CUDA device to avoid device mismatches - do this FIRST
         if device.type == 'cuda':
-            torch.cuda.set_device(device)
-
+            # Validate CUDA device exists
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA is not available on this system")
+            
+            num_devices = torch.cuda.device_count()
+            device_index = device.index if device.index is not None else 0
+                
+            if device_index >= num_devices:
+                available_devices = [f"cuda:{i}" for i in range(num_devices)]
+                raise RuntimeError(
+                    f"Invalid CUDA device {device_override}. "
+                    f"System has {num_devices} CUDA device(s): {available_devices}"
+                )
+            
+            torch.cuda.set_device(device_index)
+ 
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type == 'cuda':
-            torch.cuda.set_device(device)
+            torch.cuda.set_device(0)  # Use default device
     
     config: Config = load_config(config_path_or_obj, config_model=Config)
     run_name = get_run_name(config)
@@ -428,8 +442,25 @@ if __name__ == "__main__":
     if args.device:
         device = torch.device(args.device)
         if device.type == 'cuda':
-            torch.cuda.set_device(device)
-            print(f"Set CUDA device context to: {device}")
+            # Validate CUDA device exists
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA is not available on this system")
+            
+            num_devices = torch.cuda.device_count()
+            if device.index is None:
+                device_index = 0
+            else:
+                device_index = device.index
+                
+            if device_index >= num_devices:
+                available_devices = [f"cuda:{i}" for i in range(num_devices)]
+                raise RuntimeError(
+                    f"Invalid CUDA device {args.device}. "
+                    f"System has {num_devices} CUDA device(s): {available_devices}"
+                )
+            
+            torch.cuda.set_device(device_index)
+            print(f"Set CUDA device context to: {device} (validated)")
     
     # Load config and apply any overrides
     config_path = Path(args.config_path)
