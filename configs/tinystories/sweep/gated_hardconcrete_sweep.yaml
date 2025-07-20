@@ -1,4 +1,5 @@
 # Gated Hard Concrete SAE Hyperparameter Sweep Configuration
 # Parameters for combined Gated + Hard Concrete SAE training
 
-sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]
+saes:
+  sparsity_coeffs: [50, 10, 5, 1, 0.5, 0.1, 0.05, 0.01, 0.005]

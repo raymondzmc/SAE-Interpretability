@@ -1,12 +1,9 @@
 import torch
 import random
 import numpy as np
-import yaml
-from pathlib import Path
 from typing import Any
 
 from config import Config
-from utils.constants import CONFIG_FILE
 from utils.types import BaseModelType
 
 
