@@ -291,6 +291,9 @@ def train(
 def run(config_path_or_obj: Path | str | Config, device_override: str | None = None) -> None:
     if device_override:
         device = torch.device(device_override)
+        # Set default CUDA device to avoid device mismatches
+        if device.type == 'cuda':
+            torch.cuda.set_device(device)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config: Config = load_config(config_path_or_obj, config_model=Config)
@@ -331,6 +334,11 @@ def run(config_path_or_obj: Path | str | Config, device_override: str | None = N
         tlens_model=tlens_model,
         sae_config=config.saes
     ).to(device=device)
+    
+    # Ensure all SAE components are on the correct device
+    model.saes.to(device=device)
+    for sae_module in model.saes.modules():
+        sae_module.to(device=device)
 
     all_param_names = [name for name, _ in model.saes.named_parameters()]
     if config.saes.pretrained_sae_paths is not None:
