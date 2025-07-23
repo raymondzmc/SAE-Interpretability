@@ -82,6 +82,7 @@ class SAETransformer(torch.nn.Module):
                     stretch_limits=sae_config.hard_concrete_stretch_limits,
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
+                    input_dependent_gates=sae_config.input_dependent_gates,
                 ).to(device)
             elif isinstance(sae_config, GatedSAEConfig):
                 self.saes[self.all_sae_positions[i]] = GatedSAE(
@@ -404,13 +405,12 @@ class SAETransformer(torch.nn.Module):
         Returns:
             An instance of the SAETransformer class loaded from the specified wandb run.
         """
+        import pdb; pdb.set_trace()
         api = wandb.Api()
         run: Run = api.run(wandb_project_run_id)
         model_cache_dir = Path(WANDB_CACHE_DIR) / wandb_project_run_id
 
-        train_config_file_remote = [
-            file for file in run.files() if file.name.endswith(CONFIG_FILE)
-        ][0]
+        train_config_file_remote = [file for file in run.files() if file.name.endswith(CONFIG_FILE)][0]
 
         train_config_file = train_config_file_remote.download(
             exist_ok=True, replace=True, root=model_cache_dir

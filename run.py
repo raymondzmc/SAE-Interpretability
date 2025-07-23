@@ -79,7 +79,11 @@ def evaluate(
         batch_metrics = all_metrics(output, train=False)
         
         for k, v in batch_metrics.items():
-            accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * n_tokens
+            if k.startswith("eval/loss/"):
+                # Loss is already per-token averaged, so just weight by batch size
+                accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * tokens.shape[0]
+            else:
+                accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * n_tokens
 
     # Get the mean for all metrics
     for key in accumulated_metrics:
@@ -267,6 +271,10 @@ def train(
                 model_filename=f"samples_{total_samples}.pt",
                 config_filename=CONFIG_FILE,
             )
+            if config.wandb_project:
+                wandb.save(
+                    str(save_dir / f"samples_{total_samples}.pt"), policy="now", base_path=save_dir
+                )
 
 
         if is_last_batch:
@@ -282,6 +290,10 @@ def train(
             model_filename=f"samples_{total_samples}.pt",
             config_filename=CONFIG_FILE,
         )
+        if config.wandb_project:
+            wandb.save(
+                str(save_dir / f"samples_{total_samples}.pt"), policy="now", base_path=save_dir
+            )
 
 
     if config.wandb_project:

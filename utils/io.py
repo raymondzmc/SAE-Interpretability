@@ -39,7 +39,7 @@ def save_module(
     logger.info("Saved model to %s", save_dir / model_filename)
 
 
-def load_config(config_path_or_obj: Path | str | BaseModelType, config_model: type[BaseModelType]) -> BaseModelType:
+def load_config(config_path_or_obj: Path | str | BaseModelType | dict[str, Any], config_model: type[BaseModelType]) -> BaseModelType:
     """Load the config of class `config_model`, either from YAML file or existing config object.
 
     Args:
@@ -52,14 +52,17 @@ def load_config(config_path_or_obj: Path | str | BaseModelType, config_model: ty
 
     if isinstance(config_path_or_obj, str):
         config_path_or_obj = Path(config_path_or_obj)
-
-    assert isinstance(
-        config_path_or_obj, Path
-    ), f"passed config is of invalid type {type(config_path_or_obj)}"
-    assert (
-        config_path_or_obj.suffix == ".yaml"
-    ), f"Config file {config_path_or_obj} must be a YAML file."
-    assert Path(config_path_or_obj).exists(), f"Config file {config_path_or_obj} does not exist."
-    with open(config_path_or_obj) as f:
-        config_dict = yaml.safe_load(f)
+    
+    if isinstance(config_path_or_obj, dict):
+        config_dict = config_path_or_obj
+    else:
+        assert isinstance(
+            config_path_or_obj, Path
+        ), f"passed config is of invalid type {type(config_path_or_obj)}"
+        assert (
+            config_path_or_obj.suffix == ".yaml"
+        ), f"Config file {config_path_or_obj} must be a YAML file."
+        assert Path(config_path_or_obj).exists(), f"Config file {config_path_or_obj} does not exist."
+        with open(config_path_or_obj) as f:
+            config_dict = yaml.safe_load(f)
     return config_model(**config_dict)
