@@ -61,7 +61,7 @@ def show_session_status(session_name: str) -> Optional[str]:
 
 def monitor_experiments():
     """Show status of all running experiments."""
-    experiments = get_experiment_sessions()
+    experiments = get_tmux_sessions()
     
     if not experiments:
         print("No active experiment sessions found.")
