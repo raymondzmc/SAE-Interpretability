@@ -79,8 +79,14 @@ def hard_concrete(
 class HardConcreteSAE(BaseSAE):
     """
     Hard Concrete Sparse AutoEncoder using Hard Concrete stochastic gates for coefficients (L0 Sparsity).
-    Combines L0 gating with ReLU-based magnitude for reconstruction.
-    Supports both input-dependent gates and parameter-based gates.
+    Combines L0 gating with magnitude for reconstruction.
+    
+    Supports two gate types:
+    - Input-dependent gates: Gates computed from input (position/content-specific for NLP)
+    - Input-independent gates: Global parameter-based gates (same across all positions for NLP)
+    
+    For NLP models with sequence inputs, input-independent gates use the same gate values
+    across all sequence positions, making them truly global and more interpretable.
     """
 
     def __init__(
@@ -137,13 +143,17 @@ class HardConcreteSAE(BaseSAE):
         """
         Forward pass through the SAE.
         
+        Args:
+            x: Input tensor of shape (batch_size, input_size) or (batch_size, seq_len, input_size) for NLP
+        
         For input-dependent gates:
             - Encoder outputs logits and pre-magnitude values
             - Gates are sampled from Hard Concrete using input-dependent logits
             
-        For parameter-based gates:
+        For parameter-based gates (input-independent):
             - Encoder outputs only pre-magnitude values  
-            - Gates are sampled from Hard Concrete using learnable parameter logits
+            - Gates are sampled from Hard Concrete using global learnable parameter logits
+            - Same gate values are used across all positions for NLP models
             
         Returns:
             x_hat: Reconstructed input.
@@ -166,19 +176,19 @@ class HardConcreteSAE(BaseSAE):
             logits, magnitude = torch.chunk(encoder_out, 2, dim=-1)
         else:
             # Parameter-based gates: encoder only outputs pre-magnitude
-            magnitude = encoder_out  # Shape: (batch_size, n_dict_components)
-            # Use parameter logits (same for all inputs in batch)
-            logits = self.gate_logits.unsqueeze(0).expand(x.size(0), -1)  # Shape: (batch_size, n_dict_components)
+            magnitude = encoder_out
+            target_shape = magnitude.shape
+            logits = self.gate_logits.view(1, 1, -1).expand(target_shape)
 
         # Sample gates z from Hard Concrete distribution using logits and current beta
         current_beta = self.beta.item() # Get current beta value from buffer
-        z = hard_concrete(logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: (batch_size, n_dict_components)
+        z = hard_concrete(logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
 
         # Calculate magnitude using ReLU on pre-magnitude (removed since magnitudes can be negative)
         # magnitude_c = F.relu(pre_magnitude) # Shape: (batch_size, n_dict_components)
     
         # Combine gate and magnitude for final coefficients
-        c = z * magnitude # Shape: (batch_size, n_dict_components)
+        c = z * magnitude
 
         # Reconstruct using the dictionary elements and final coefficients
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
