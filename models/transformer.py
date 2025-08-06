@@ -25,8 +25,8 @@ from models.saes import (
     create_sae_config,
 ) 
 from models.loader import load_tlens_model
-from utils.models import get_hook_shapes
 from utils.constants import CONFIG_FILE, WANDB_CACHE_DIR
+from utils.models import get_hook_shapes
 
 
 class SAETransformerOutput(BaseModel):
@@ -405,18 +405,20 @@ class SAETransformer(torch.nn.Module):
         Returns:
             An instance of the SAETransformer class loaded from the specified wandb run.
         """
-        import pdb; pdb.set_trace()
         api = wandb.Api()
         run: Run = api.run(wandb_project_run_id)
         model_cache_dir = Path(WANDB_CACHE_DIR) / wandb_project_run_id
 
-        train_config_file_remote = [file for file in run.files() if file.name.endswith(CONFIG_FILE)][0]
+        train_config_files_remote = [file for file in run.files() if file.name.endswith(CONFIG_FILE)]
+        assert len(train_config_files_remote) > 0, f"Cannot find config file for wandb run {wandb_project_run_id}."
+        train_config_file_remote = train_config_files_remote[0]
 
         train_config_file = train_config_file_remote.download(
             exist_ok=True, replace=True, root=model_cache_dir
         ).name
 
         checkpoints = [file for file in run.files() if file.name.endswith(".pt")]
+        assert len(checkpoints) > 0, f"Cannot find any checkpoints for wandb run {wandb_project_run_id}."
         latest_checkpoint_remote = sorted(
             checkpoints, key=lambda x: int(x.name.split(".pt")[0].split("_")[-1])
         )[-1]
@@ -424,7 +426,6 @@ class SAETransformer(torch.nn.Module):
             exist_ok=True, replace=True, root=model_cache_dir
         ).name
         assert latest_checkpoint_file is not None, "Failed to download the latest checkpoint."
-
         return cls.from_local_path(
             checkpoint_file=latest_checkpoint_file, config_file=train_config_file
         )
@@ -470,14 +471,14 @@ class SAETransformer(torch.nn.Module):
                 checkpoint_files, key=lambda x: int(x.name.split(".pt")[0].split("_")[-1])
             )[-1]
 
-        with open(config_file) as f:
+        with open(config_file, "r") as f:
             config = yaml.safe_load(f)
 
         tlens_model = load_tlens_model(
-            tlens_model_name=config["tlens_model_name"],
-            tlens_model_path=config["tlens_model_path"],
+            tlens_model_name=config["tlens_model_name"]['value'],
+            tlens_model_path=config["tlens_model_path"]['value'],
             device="cpu"  # Load to CPU first, then to target device in SAETransformer.__init__
         )
-        model = cls(tlens_model=tlens_model, sae_config=create_sae_config(config["saes"]))
+        model = cls(tlens_model=tlens_model, sae_config=create_sae_config(config["saes"]["value"]))
         model.saes.load_state_dict(torch.load(checkpoint_file, map_location="cpu"))
         return model

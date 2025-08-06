@@ -5,6 +5,36 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Any
 import re
 
+
+EXCLUDE_RUN_IDS = [
+    'twoagsgt',
+    'f4nvldll',
+    'gjjl6n95',
+    # 'zu4cqbsw',
+    # '0jennxfn',
+    # 'x5q9xinm',
+    # # 'm159z1bk',
+    # 'cqr1x92u',
+    # # '3sokvaif',
+    # 'g68gpv2r',
+    # '953pems7',
+    # 'g68gpv2r',
+    # 'j3o82ivu',
+    # '9n6f7ydq',
+    # 'qoufqca1',
+    # '51bgc9zd',
+    # '5gq797mj',
+    # 'z869pdb4',
+    # 'gjjl6n95',
+    # '15x8bwpp',
+]
+
+explained_variance_range = {
+    2: (0.98, 1.002),
+    4: (0.97, 1.002),
+    6: (0.80, 1.002),
+}
+
 def format_sparsity_coeff(value: Any) -> str:
     """Format sparsity coefficient with appropriate precision."""
     if value is None or (isinstance(value, float) and np.isnan(value)):
@@ -38,7 +68,7 @@ def extract_multi_layer_metrics(run: Any) -> Dict[str, Any]:
         
         # Map SAE types to display names, distinguishing hard concrete variants
         if sae_type == 'hard_concrete' and not input_dependent_gates:
-            run_data['method'] = 'HardConcreteNoGates'
+            run_data['method'] = 'HardConcrete (IIG)'
         else:
             sae_type_mapping = {
                 'relu': 'ReLU',
@@ -52,7 +82,7 @@ def extract_multi_layer_metrics(run: Any) -> Dict[str, Any]:
         if 'relu' in run.name.lower() or (run.config.get('wandb_tags') and 'relu' in run.config['wandb_tags']):
             run_data['method'] = 'ReLU'
         elif 'no_learned_gates' in run.name.lower() or (run.config.get('wandb_tags') and 'no_learned_gates' in run.config['wandb_tags']):
-            run_data['method'] = 'HardConcreteNoGates'
+            run_data['method'] = 'HardConcrete (IIG)'
         elif 'hard' in run.name.lower() and 'concrete' in run.name.lower():
             run_data['method'] = 'HardConcrete'
         elif 'gated' in run.name.lower():
@@ -140,14 +170,14 @@ def create_pareto_plot(df: pd.DataFrame, layers: List[int], save_path: str = Non
     colors = {
         'ReLU': '#d62728',
         'HardConcrete': '#2ca02c', 
-        'HardConcreteNoGates': '#8c564b',
+        'HardConcrete (IIG)': '#8c564b',
         'Gated': '#ff7f0e',
         'GatedHardConcrete': '#9467bd'
     }
     markers = {
         'ReLU': 'o',
         'HardConcrete': 's', 
-        'HardConcreteNoGates': 'v',
+        'HardConcrete (IIG)': 'v',
         'Gated': '^',
         'GatedHardConcrete': 'D'
     }
@@ -174,9 +204,33 @@ def create_pareto_plot(df: pd.DataFrame, layers: List[int], save_path: str = Non
             continue
         
         # Plot each method
-        for method in ['ReLU', 'HardConcrete', 'HardConcreteNoGates', 'Gated', 'GatedHardConcrete']:
+        for method in ['ReLU', 'HardConcrete', 'HardConcrete (IIG)', 'Gated', 'GatedHardConcrete']:
             method_df = layer_df[layer_df['method'] == method]
             if not method_df.empty:
+                # Filter points that are within the plot range for explained variance
+                if metric_type == 'explained_var':
+                    y_min, y_max = explained_variance_range.get(layer, (0.98, 1.002))
+                    visible_points = method_df[
+                        (method_df[y_col] >= y_min) & (method_df[y_col] <= 1.0)
+                    ]
+                else:
+                    visible_points = method_df
+                
+                # Sort by sparsity for line connection (only visible points)
+                if not visible_points.empty:
+                    visible_points_sorted = visible_points.sort_values(sparsity_col)
+                    
+                    # Plot line first (so it's behind the points) - only for visible points
+                    ax.plot(
+                        visible_points_sorted[sparsity_col], 
+                        visible_points_sorted[y_col],
+                        c=colors[method],
+                        alpha=0.6,
+                        linewidth=1.5,
+                        zorder=1
+                    )
+                
+                # Plot scatter points on top (all points)
                 ax.scatter(
                     method_df[sparsity_col], 
                     method_df[y_col],
@@ -186,7 +240,8 @@ def create_pareto_plot(df: pd.DataFrame, layers: List[int], save_path: str = Non
                     alpha=0.7,
                     label=method,
                     edgecolors='black',
-                    linewidth=0.5
+                    linewidth=0.5,
+                    zorder=2
                 )
                 
                 # Add sparsity coefficient annotations
@@ -200,7 +255,8 @@ def create_pareto_plot(df: pd.DataFrame, layers: List[int], save_path: str = Non
                             fontsize=7,
                             color=colors[method],
                             alpha=0.8,
-                            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none')
+                            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'),
+                            zorder=3
                         )
         
         ax.set_xlabel('Sparsity (L0)')
@@ -212,6 +268,12 @@ def create_pareto_plot(df: pd.DataFrame, layers: List[int], save_path: str = Non
         # Set log scale for MSE but not for explained variance
         if metric_type == 'mse':
             ax.set_yscale('log')
+        elif metric_type == 'explained_var':
+            y_min, y_max = explained_variance_range.get(layer, (0.98, 1.002))
+            ax.set_ylim(y_min, y_max)
+            # Create exactly 5 ticks from y_min to 1.0
+            ticks = np.linspace(y_min, 1.0, 5)
+            ax.set_yticks(ticks)
     
     plt.tight_layout()
     
@@ -273,14 +335,21 @@ def main():
     # Create DataFrame
     df = pd.DataFrame(run_data_list)
 
+    # Exclude specific runs
+    if EXCLUDE_RUN_IDS:
+        df_before_exclude = len(df)
+        df = df[~df['id'].isin(EXCLUDE_RUN_IDS)]
+        excluded_count = df_before_exclude - len(df)
+        print(f"Excluded {excluded_count} runs with IDs: {EXCLUDE_RUN_IDS}")
+
     # Filter to only finished runs
     df = df[df['state'] == 'finished']
     print(f"Finished runs: {len(df)}")
     
     # Filter to only include the 5 requested SAE types
-    requested_methods = ['ReLU', 'HardConcrete', 'HardConcreteNoGates', 'Gated', 'GatedHardConcrete']
+    requested_methods = ['ReLU', 'HardConcrete', 'HardConcrete (IIG)', 'Gated', 'GatedHardConcrete']
     df = df[df['method'].isin(requested_methods)]
-    print(f"Runs with requested SAE types (ReLU, HardConcrete, HardConcreteNoGates, Gated, GatedHardConcrete): {len(df)}")
+    print(f"Runs with requested SAE types (ReLU, HardConcrete, HardConcrete (IIG), Gated, GatedHardConcrete): {len(df)}")
 
     if df.empty:
         print("No finished runs found!")
@@ -351,14 +420,14 @@ def main():
             colors = {
                 'ReLU': '#d62728',
                 'HardConcrete': '#2ca02c', 
-                'HardConcreteNoGates': '#8c564b',
+                'HardConcrete (IIG)': '#8c564b',
                 'Gated': '#ff7f0e',
                 'GatedHardConcrete': '#9467bd'
             }
             markers = {
                 'ReLU': 'o',
                 'HardConcrete': 's', 
-                'HardConcreteNoGates': 'v',
+                'HardConcrete (IIG)': 'v',
                 'Gated': '^',
                 'GatedHardConcrete': 'D'
             }
@@ -384,6 +453,20 @@ def main():
                         if label:
                             legend_added[method] = True
                         
+                        # Sort by sparsity for line connection (no filtering for MSE plots - use all points)
+                        method_df_sorted = method_df.sort_values(sparsity_col)
+                        
+                        # Plot line first (so it's behind the points)
+                        plt.plot(
+                            method_df_sorted[sparsity_col], 
+                            method_df_sorted[recon_col],
+                            c=colors[method],
+                            alpha=0.6,
+                            linewidth=1.5,
+                            zorder=1
+                        )
+                        
+                        # Plot scatter points on top
                         plt.scatter(
                             method_df[sparsity_col], 
                             method_df[recon_col],
@@ -393,7 +476,8 @@ def main():
                             alpha=0.7,
                             label=label,
                             edgecolors='black',
-                            linewidth=0.5
+                            linewidth=0.5,
+                            zorder=2
                         )
                         
                         # Add sparsity coefficient annotations
@@ -407,12 +491,13 @@ def main():
                                     fontsize=8,
                                     color=colors[method],
                                     alpha=0.8,
-                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none')
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'),
+                                    zorder=3
                                 )
             
             plt.xlabel('Sparsity (L0)', fontsize=12)
             plt.ylabel('Reconstruction Loss (MSE)', fontsize=12)
-            plt.title('Sparsity vs Reconstruction Loss Trade-off\n(5 SAE Architectures: ReLU, HardConcrete, HardConcreteNoGates, Gated, GatedHardConcrete)', fontsize=14)
+            plt.title('Sparsity vs Reconstruction Loss Trade-off\n(5 SAE Architectures: ReLU, HardConcrete, HardConcrete (IIG), Gated, GatedHardConcrete)', fontsize=14)
             plt.yscale('log')
             
             # Only add legend if we have labeled artists
@@ -448,6 +533,27 @@ def main():
                         if label:
                             legend_added[method] = True
                         
+                        # Filter points that are within the plot range
+                        y_min = min(explained_variance_range[layer][0] for layer in explained_variance_range.keys())
+                        visible_points = method_df[
+                            (method_df[exp_var_col] >= y_min) & (method_df[exp_var_col] <= 1.0)
+                        ]
+                        
+                        # Sort by sparsity for line connection (only visible points)
+                        if not visible_points.empty:
+                            visible_points_sorted = visible_points.sort_values(sparsity_col)
+                            
+                            # Plot line first (so it's behind the points) - only for visible points
+                            plt.plot(
+                                visible_points_sorted[sparsity_col], 
+                                visible_points_sorted[exp_var_col],
+                                c=colors[method],
+                                alpha=0.6,
+                                linewidth=1.5,
+                                zorder=1
+                            )
+                        
+                        # Plot scatter points on top
                         plt.scatter(
                             method_df[sparsity_col], 
                             method_df[exp_var_col],
@@ -457,7 +563,8 @@ def main():
                             alpha=0.7,
                             label=label,
                             edgecolors='black',
-                            linewidth=0.5
+                            linewidth=0.5,
+                            zorder=2
                         )
                         
                         # Add sparsity coefficient annotations
@@ -471,12 +578,20 @@ def main():
                                     fontsize=8,
                                     color=colors[method],
                                     alpha=0.8,
-                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none')
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'),
+                                    zorder=3
                                 )
             
             plt.xlabel('Sparsity (L0)', fontsize=12)
             plt.ylabel('Explained Variance', fontsize=12)
-            plt.title('Sparsity vs Explained Variance Trade-off\n(5 SAE Architectures: ReLU, HardConcrete, HardConcreteNoGates, Gated, GatedHardConcrete)', fontsize=14)
+            plt.title('Sparsity vs Explained Variance Trade-off\n(5 SAE Architectures: ReLU, HardConcrete, HardConcrete (IIG), Gated, GatedHardConcrete)', fontsize=14)
+            # Use the broadest range to accommodate all layers
+            y_min = min(explained_variance_range[layer][0] for layer in explained_variance_range.keys())
+            y_max = max(explained_variance_range[layer][1] for layer in explained_variance_range.keys())
+            plt.ylim(y_min, y_max)
+            # Create exactly 5 ticks from y_min to 1.0
+            ticks = np.linspace(y_min, 1.0, 5)
+            plt.yticks(ticks)
             
             # Only add legend if we have labeled artists
             if any(legend_added.values()):
@@ -514,6 +629,20 @@ def main():
                 for method in colors.keys():
                     method_df = layer_df[layer_df['method'] == method]
                     if not method_df.empty:
+                        # Sort by sparsity for line connection (no filtering for MSE plots - use all points)
+                        method_df_sorted = method_df.sort_values(sparsity_col)
+                        
+                        # Plot line first (so it's behind the points)
+                        ax.plot(
+                            method_df_sorted[sparsity_col], 
+                            method_df_sorted[recon_col],
+                            c=colors[method],
+                            alpha=0.6,
+                            linewidth=1.5,
+                            zorder=1
+                        )
+                        
+                        # Plot scatter points on top
                         ax.scatter(
                             method_df[sparsity_col], 
                             method_df[recon_col],
@@ -523,7 +652,8 @@ def main():
                             alpha=0.7,
                             label=method,
                             edgecolors='black',
-                            linewidth=0.5
+                            linewidth=0.5,
+                            zorder=2
                         )
                         
                         # Add sparsity coefficient annotations
@@ -537,7 +667,8 @@ def main():
                                     fontsize=7,
                                     color=colors[method],
                                     alpha=0.8,
-                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none')
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'),
+                                    zorder=3
                                 )
                 
                 ax.set_xlabel('Sparsity (L0)')
@@ -576,6 +707,27 @@ def main():
                 for method in colors.keys():
                     method_df = layer_df[layer_df['method'] == method]
                     if not method_df.empty:
+                        # Filter points that are within the plot range
+                        y_min, y_max = explained_variance_range.get(layer, (0.98, 1.002))
+                        visible_points = method_df[
+                            (method_df[exp_var_col] >= y_min) & (method_df[exp_var_col] <= 1.0)
+                        ]
+                        
+                        # Sort by sparsity for line connection (only visible points)
+                        if not visible_points.empty:
+                            visible_points_sorted = visible_points.sort_values(sparsity_col)
+                            
+                            # Plot line first (so it's behind the points) - only for visible points
+                            ax.plot(
+                                visible_points_sorted[sparsity_col], 
+                                visible_points_sorted[exp_var_col],
+                                c=colors[method],
+                                alpha=0.6,
+                                linewidth=1.5,
+                                zorder=1
+                            )
+                        
+                        # Plot scatter points on top
                         ax.scatter(
                             method_df[sparsity_col], 
                             method_df[exp_var_col],
@@ -585,7 +737,8 @@ def main():
                             alpha=0.7,
                             label=method,
                             edgecolors='black',
-                            linewidth=0.5
+                            linewidth=0.5,
+                            zorder=2
                         )
                         
                         # Add sparsity coefficient annotations
@@ -599,12 +752,18 @@ def main():
                                     fontsize=7,
                                     color=colors[method],
                                     alpha=0.8,
-                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none')
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'),
+                                    zorder=3
                                 )
                 
                 ax.set_xlabel('Sparsity (L0)')
                 ax.set_ylabel('Explained Variance')
                 ax.set_title(f'Layer {layer}')
+                y_min, y_max = explained_variance_range.get(layer, (0.98, 1.002))
+                ax.set_ylim(y_min, y_max)
+                # Create exactly 5 ticks from y_min to 1.0
+                ticks = np.linspace(y_min, 1.0, 5)
+                ax.set_yticks(ticks)
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             

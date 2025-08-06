@@ -1,10 +1,9 @@
 import asyncio  # For running async explainer
 import json
-import math
 import os
 from collections.abc import Sequence
 from typing import Any
-
+from torch.nn import functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -28,8 +27,9 @@ from transformers import AutoTokenizer
 
 from config import Config
 from data import create_dataloaders
-from models import SAETransformer
+from models import SAETransformer, SAETransformerOutput
 from utils.io import load_config
+from utils.enums import SAEType
 # from e2e_sae import SAETransformer
 # from e2e_sae.data import DatasetConfig, create_data_loader
 # from e2e_sae.losses import calc_explained_variance
@@ -41,48 +41,12 @@ NUM_FEATURES_FOR_EXPLANATION = 20
 MIN_COUNT = 20
 N_EVAL_SAMPLES = 50000
 OPENAI_API_KEY = settings.openai_api_key
+EPSILON = 1e-6
 OPENAI_MODELS = {
     "gpt-4o-mini": "gpt-4o-mini-07-18",
     "gpt-4o": "gpt-4o-2024-11-20",
 }
 PROJECT = "raymondl/tinystories-1m"
-
-
-def compute_hard_concrete_probabilities(
-    logits: torch.Tensor, 
-    beta: float, 
-    l: float, 
-    r: float,
-    epsilon: float = 1e-6
-) -> torch.Tensor | None:
-    """
-    Compute Hard Concrete gate probabilities from logits.
-    
-    The probability that a gate is "on" (P(z > 0)) is given by:
-    P(z > 0) = sigmoid(logits - beta * log(-l/r))
-    
-    Args:
-        logits: Logits parameter (alpha) for the Hard Concrete distribution
-        beta: Temperature parameter controlling sharpness
-        l: Lower bound of the stretch interval (must be < 0)
-        r: Upper bound of the stretch interval (must be > 1)
-        epsilon: Small constant for numerical stability
-        
-    Returns:
-        Probabilities in [0, 1] or None if invalid parameters
-    """
-    import math
-    
-    # Ensure parameters are valid for log computation
-    safe_l = l if abs(l) > epsilon else -epsilon
-    safe_r = r if abs(r) > epsilon else epsilon
-    log_arg = -safe_l / safe_r
-    
-    if log_arg <= 0:
-        return None
-        
-    log_ratio = math.log(log_arg)
-    return torch.sigmoid(logits - beta * log_ratio)
 
 
 def create_pareto_plots(all_run_metrics: list[dict[str, Any]]) -> None:
@@ -347,7 +311,6 @@ def save_activation_data(accumulated_data: dict[str, dict[str, torch.Tensor]], r
         # Replace dots and other characters that might be problematic in filenames
         safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
         file_path = os.path.join(activation_data_dir, f"{safe_layer_name}.pt")
-        
         torch.save(data, file_path)
         print(f"Saved activation data for {sae_pos} to {file_path}")
 
@@ -430,11 +393,11 @@ for run in runs:
     run_config['data']['n_eval_samples'] = N_EVAL_SAMPLES
     config = load_config(run_config, Config)
     run_dir = f"evaluation_results/{config.wandb_run_name}-{run_id}"
+
     _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
     metrics = {}
     tokenizer = AutoTokenizer.from_pretrained(config.data.tokenizer_name)
     model = SAETransformer.from_wandb(f"{PROJECT}/{run_id}").to(device)
-    import pdb; pdb.set_trace()
     model.saes.eval()
 
     if os.path.exists(run_dir):
@@ -468,75 +431,54 @@ for run in runs:
         accumulated_data = {}
         for sae_pos in model.raw_sae_positions:
             accumulated_data[sae_pos] = {
-                'nonzero_activations': torch.empty(0, WINDOW_SIZE, dtype=torch.int8),
+                'nonzero_activations': torch.empty(0, WINDOW_SIZE, dtype=torch.float16),
                 'data_indices': torch.empty(0, dtype=torch.long),
                 'neuron_indices': torch.empty(0, dtype=torch.long),
             }
             metrics[sae_pos] = {
-                'alive_dict_components': 0,
-                'alive_dict_components_proportion': 0.0,
+                'alive_dict_components': set(),
                 'sparsity_l0': 0.0,
                 'mse': 0.0,
-                'explained_variance': 0.0,
             }
-
-        cache_positions: list[str] | None = None
-        if config['loss']['in_to_orig'] is not None:
-            assert set(config['loss']['in_to_orig']['hook_positions']).issubset(
-                set(model.tlens_model.hook_dict.keys())
-            ), "Some hook_positions in config.loss.in_to_orig.hook_positions are not in the model."
-            # Don't add a cache position if there is already an SAE at that position which will cache
-            # the inputs anyway
-            cache_positions = [
-                pos for pos in config.loss.in_to_orig.hook_positions if pos not in model.raw_sae_positions
-            ]
         
-        # Compute max activations for each neuron
+        # Compute max activations and metrics for each neuron
         max_activations = {pos: None for pos in model.raw_sae_positions}
-        for batch_idx, batch in tqdm(enumerate(eval_loader), desc="Computing max activations"):
-            token_ids = batch[eval_config.column_name].to(device)
+        total_tokens = 0
+        for batch_idx, batch in enumerate(tqdm(eval_loader, desc="Computing max activations and metrics")):
+            token_ids = batch[config.data.column_name].to(device)
             batch_size_, seq_len = token_ids.shape
             num_chunks = seq_len // WINDOW_SIZE
             token_ids_chunked = token_ids.view(batch_size_, num_chunks, WINDOW_SIZE)
             token_ids_chunked = token_ids_chunked.reshape(-1, WINDOW_SIZE)
+            n_tokens = token_ids_chunked.shape[0] * token_ids_chunked.shape[1]
+            total_tokens += n_tokens
             with torch.no_grad():
-                _, orig_acts = model.forward_raw(
-                    tokens=token_ids_chunked,
-                    run_entire_model=True,
-                    final_layer=None,
-                )
-                _, new_acts = model.forward(
+                output: SAETransformerOutput = model.forward(
                     tokens=token_ids_chunked,
                     sae_positions=model.raw_sae_positions,
-                    orig_acts=orig_acts,
-                    cache_positions=None,
+                    compute_loss=False,
                 )
+            import pdb; pdb.set_trace()
 
             for pos in model.raw_sae_positions:
-                sae_acts = new_acts[pos]
-                actual_acts = sae_acts.c  # shape: [chunked_batch, seq_len, num_features]
-                sparsity_l0 = torch.norm(actual_acts, p=0, dim=-1).mean() / actual_acts.shape[-1]                
-                mse = mse_loss(sae_acts.output, orig_acts[pos])
-                explained_variance = calc_explained_variance(sae_acts.output, orig_acts[pos])
-                
-                # Update metrics
-                metrics[pos]['sparsity_l0'] += sparsity_l0.item()
-                metrics[pos]['mse'] += mse.item()
-                metrics[pos]['explained_variance'] = explained_variance.mean().item()
+                metrics[pos]['mse'] += mse_loss(
+                    output.sae_outputs[pos].output,
+                    output.sae_outputs[pos].input,
+                    reduction='mean'
+                ) * n_tokens
+                activations = output.sae_outputs[pos].c
+                metrics[pos]['sparsity_l0'] += torch.norm(activations, p=0, dim=-1).mean().item() * n_tokens
+                metrics[pos]['alive_dict_components'].update(activations.sum(0).sum(0).nonzero().unique().cpu().tolist())
 
                 # For feature extraction: Use probabilities for Bayesian SAEs, activations for ReLU SAEs
-                if hasattr(sae_acts, 'logits') and sae_acts.logits is not None:
-                    # Compute probabilities for Bayesian SAE feature extraction
-                    probs = compute_hard_concrete_probabilities(
-                        sae_acts.logits, sae_acts.beta, sae_acts.l, sae_acts.r
-                    )
-                    if probs is not None:
-                        acts = probs  # Use probabilities for feature extraction
-                    else:
-                        print(f"Warning: Invalid Hard Concrete parameters for {pos}, falling back to activations")
-                        acts = actual_acts
+                if config.saes.sae_type == SAEType.HardConcrete:
+                    acts = sae_acts.z
+                elif config.saes.sae_type == SAEType.RELU:
+                    acts = sae_acts.c
+                elif config.saes.sae_type == SAEType.GATED:
+                    acts = sae_acts.mask
                 else:
-                    acts = actual_acts  # Use activations for ReLU SAEs
+                    raise ValueError(f"Invalid SAE type: {config.saes.sae_type}")
                 
                 max_acts = acts.view(-1, acts.size(-1)).max(dim=0).values
                 if max_activations[pos] is None:
@@ -546,11 +488,10 @@ for run in runs:
 
 
         # Store activations for each neuron
-        for batch_idx, batch in tqdm(enumerate(eval_loader), total=n_batches, desc="Eval Steps"):
-            if batch_idx >= n_batches:
-                break
-            token_ids = batch[eval_config.column_name].to(device)
-            total_tokens += token_ids.shape[0] * token_ids.shape[1]
+        for batch_idx, batch in tqdm(enumerate(eval_loader), desc="Eval Steps"):
+            token_ids = batch[config.data.column_name].to(device)
+            n_tokens = token_ids.shape[0] * token_ids.shape[1]
+            total_tokens += n_tokens
 
             # Reshape token_ids to break into chunks of WINDOW_SIZE
             batch_size, seq_len = token_ids.shape
@@ -573,37 +514,46 @@ for run in runs:
             for sae_pos in model.raw_sae_positions:
                 sae_acts = new_acts[sae_pos]
                 
-                # For feature extraction: Use probabilities for Bayesian SAEs, activations for ReLU SAEs
-                if hasattr(sae_acts, 'logits') and sae_acts.logits is not None:
-                    # Compute probabilities for Bayesian SAE feature extraction
-                    # P(z > 0) = sigmoid(logits - beta * log(-l/r))
-                    probs = compute_hard_concrete_probabilities(
-                        sae_acts.logits, sae_acts.beta, sae_acts.l, sae_acts.r
-                    )
-                    if probs is not None:
-                        # Use probabilities for feature extraction
-                        acts = probs  # chunked_batch_size x seq_len x num_dictionary_elements
-                        max_acts = max_activations[sae_pos]
-                        # For probabilities, we don't need to normalize by max_acts since they're already in [0,1]
-                        # Instead, we'll discretize the probabilities directly
-                        discretized_acts = torch.round(acts * 10).to(torch.int8)
-                    else:
-                        print(f"Warning: Invalid Hard Concrete parameters for {sae_pos}, falling back to activations")
-                        acts = sae_acts.c
-                        max_acts = max_activations[sae_pos]
-                        safe_max = torch.where(max_acts > 0, max_acts, torch.ones_like(max_acts))
-                        discretized_acts = torch.round((acts / safe_max.unsqueeze(0).unsqueeze(0)) * 10).to(torch.int8)
+                if config.saes.sae_type == SAEType.HardConcrete:
+                    acts = sae_acts.z
+                elif config.saes.sae_type == SAEType.RELU:
+                    acts = sae_acts.c
+                elif config.saes.sae_type == SAEType.GATED:
+                    acts = sae_acts.mask
                 else:
-                    # Regular SAE - use activations
-                    acts = sae_acts.c # chunked_batch_size x seq_len x num_dictionary_elements
-                    max_acts = max_activations[sae_pos]
-                    safe_max = torch.where(max_acts > 0, max_acts, torch.ones_like(max_acts))
-                    discretized_acts = torch.round((acts / safe_max.unsqueeze(0).unsqueeze(0)) * 10).to(torch.int8)
+                    raise ValueError(f"Invalid SAE type: {config.saes.sae_type}")
+
+                # # For feature extraction: Use probabilities for Bayesian SAEs, activations for ReLU SAEs
+                # if hasattr(sae_acts, 'logits') and sae_acts.logits is not None:
+                #     # Compute probabilities for Bayesian SAE feature extraction
+                #     # P(z > 0) = sigmoid(logits - beta * log(-l/r))
+                #     probs = compute_hard_concrete_probabilities(
+                #         sae_acts.logits, sae_acts.beta, sae_acts.l, sae_acts.r
+                #     )
+                #     if probs is not None:
+                #         # Use probabilities for feature extraction
+                #         acts = probs  # chunked_batch_size x seq_len x num_dictionary_elements
+                #         max_acts = max_activations[sae_pos]
+                #         # For probabilities, we don't need to normalize by max_acts since they're already in [0,1]
+                #         # Instead, we'll discretize the probabilities directly
+                #         discretized_acts = torch.round(acts * 10).to(torch.int8)
+                #     else:
+                #         print(f"Warning: Invalid Hard Concrete parameters for {sae_pos}, falling back to activations")
+                #         acts = sae_acts.c
+                #         max_acts = max_activations[sae_pos]
+                #         safe_max = torch.where(max_acts > 0, max_acts, torch.ones_like(max_acts))
+                #         discretized_acts = torch.round((acts / safe_max.unsqueeze(0).unsqueeze(0)) * 10).to(torch.int8)
+                # else:
+                #     # Regular SAE - use activations
+                #     acts = sae_acts.c # chunked_batch_size x seq_len x num_dictionary_elements
+                #     max_acts = max_activations[sae_pos]
+                #     safe_max = torch.where(max_acts > 0, max_acts, torch.ones_like(max_acts))
+                #     discretized_acts = torch.round((acts / safe_max.unsqueeze(0).unsqueeze(0)) * 10).to(torch.int8)
                 
-                data_indices, neuron_indices = discretized_acts.sum(1).nonzero(as_tuple=True)
+                data_indices, neuron_indices = acts.sum(1).nonzero(as_tuple=True)
                 if data_indices.numel() > 0:
                     # Extract all relevant activations/probabilities at once (N, seq_len)
-                    nonzero_activations = discretized_acts[data_indices, :, neuron_indices]
+                    nonzero_activations = acts[data_indices, :, neuron_indices]
 
                     # Add the offset to the data indices for global indexing
                     global_data_indices = data_indices + len(all_token_ids)
@@ -627,8 +577,8 @@ for run in runs:
 
         # Average metrics over all batches
         for sae_pos in model.raw_sae_positions:
-            metrics[sae_pos]['sparsity_l0'] /= n_batches
-            metrics[sae_pos]['mse'] /= n_batches
+            metrics[sae_pos]['sparsity_l0'] /= total_tokens
+            metrics[sae_pos]['mse'] /= total_tokens
             # explained_variance is already averaged per batch, so we keep the last value
             
         # After all batches are processed, save and analyze the accumulated data

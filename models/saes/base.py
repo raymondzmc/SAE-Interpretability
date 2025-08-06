@@ -47,6 +47,8 @@ class SAELoss(BaseModel):
 
 class BaseSAE(torch.nn.Module):
     """Base class for SAEs"""
+    n_dict_components: int
+    input_size: int
 
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> SAEOutput:
         raise NotImplementedError("Subclasses must implement forward pass")

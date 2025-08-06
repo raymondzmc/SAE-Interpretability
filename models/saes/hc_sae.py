@@ -26,6 +26,7 @@ class HardConcreteSAEConfig(SAEConfig):
 
 class HardConcreteSAEOutput(SAEOutput):
     """HardConcrete SAE output that extends SAEOutput with additional parameters."""
+    z: torch.Tensor
     beta: float
     l: float
     r: float
@@ -194,7 +195,7 @@ class HardConcreteSAE(BaseSAE):
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
 
         # Return logits and HC params for L0 loss calculation
-        return HardConcreteSAEOutput(input=x, c=c, output=x_hat, logits=logits, beta=current_beta, l=self.l, r=self.r)
+        return HardConcreteSAEOutput(input=x, c=c, output=x_hat, logits=logits, beta=current_beta, l=self.l, r=self.r, z=z)
     
     def calc_l0_loss(self, logits: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
         safe_l = self.l if abs(self.l) > epsilon else -epsilon
