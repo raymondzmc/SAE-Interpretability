@@ -379,7 +379,7 @@ async def _run_simulation_and_scoring(
     
     
 
-device = torch.device('cpu')
+device = torch.device('cuda:0')
 wandb.login(key=settings.wandb_api_key)
 api = wandb.Api()
 runs = api.runs(PROJECT)
