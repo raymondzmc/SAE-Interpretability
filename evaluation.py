@@ -171,15 +171,11 @@ def run_evaluation(
                     print(f"Loaded token IDs from Wandb artifacts")
                     
             except (FileNotFoundError, RuntimeError) as e:
-                raise FileNotFoundError(
-                    f"No activation data found for run {run_id}. "
-                    f"Checked local directory: {run_dir} and Wandb project: {wandb_project}. "
-                    f"Error: {e}"
-                )
+                print(f"No existing activation data found: {e}")
+                print("Will compute activation data and metrics from scratch")
         
-        # If no metrics were loaded, we'll compute them fresh
-
-        if metrics is None or len(metrics) == 0:
+        # If no data was loaded, we'll compute everything fresh
+        if accumulated_data is None:
             print(f"Obtaining features for {run_id}")
             total_tokens = 0
             all_token_ids: list[list[str]] = []
