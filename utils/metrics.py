@@ -71,27 +71,10 @@ def sparsity_metrics(output: SAETransformerOutput) -> dict[str, float]:
     sparsity_metrics = {}
     for name, sae_output in output.sae_outputs.items():
         
-        # Import here to avoid circular imports
-        from models.saes.gated_sae import GatedHardConcreteSAEOutput
-        from models.saes.hc_sae import HardConcreteSAEOutput
-
-        # Check if this is a Hard Concrete SAE output
-        is_hard_concrete = isinstance(sae_output, (HardConcreteSAEOutput, GatedHardConcreteSAEOutput))
-        
-        if is_hard_concrete:
-            # For Hard Concrete SAEs, use threshold-based sparsity on final coefficients
-            # for fair comparison with binary gate SAEs
-            threshold = 1e-6  # Small threshold to account for numerical precision
-            
-            # Use consistent "L_0" naming for chart comparison
-            l_0_norm = (sae_output.c > threshold).float().sum(dim=-1).mean().item()
-            frac_active = (sae_output.c > threshold).float().mean().item()
-            frac_zeros = 1.0 - frac_active
-            
-        else:
-            # For non-Hard Concrete SAE types (ReLU, Gated), use exact zero counting
-            l_0_norm = torch.norm(sae_output.c, p=0, dim=-1).mean().item()
-            frac_zeros = ((sae_output.c == 0).sum() / sae_output.c.numel()).item()
+        # Use consistent L0 norm calculation for all SAE types
+        # Hard Concrete SAEs now apply thresholding in their forward pass during evaluation
+        l_0_norm = torch.norm(sae_output.c, p=0, dim=-1).mean().item()
+        frac_zeros = ((sae_output.c == 0).sum() / sae_output.c.numel()).item()
 
         # Store with consistent naming for cross-SAE comparison
         sparsity_metrics[f"L_0/{name}"] = l_0_norm

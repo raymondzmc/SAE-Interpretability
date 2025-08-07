@@ -190,6 +190,11 @@ class HardConcreteSAE(BaseSAE):
     
         # Combine gate and magnitude for final coefficients
         c = z * magnitude
+        
+        # Apply threshold during evaluation for cleaner reconstruction and consistent sparsity
+        if not self.training:
+            threshold = 1e-6  # Small threshold to account for numerical precision
+            c = torch.where(torch.abs(c) > threshold, c, 0.0)
 
         # Reconstruct using the dictionary elements and final coefficients
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)

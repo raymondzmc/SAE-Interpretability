@@ -301,6 +301,11 @@ class GatedHardConcreteSAE(BaseSAE):
         # Combine gating and magnitude
         code = f_gate * f_mag
         
+        # Apply threshold during evaluation for cleaner reconstruction and consistent sparsity
+        if not self.training:
+            threshold = 1e-6  # Small threshold to account for numerical precision
+            code = torch.where(torch.abs(code) > threshold, code, 0.0)
+        
         # Decode
         recon = self.decoder(code) + self.decoder_bias  # (batch, input_dim)
         
