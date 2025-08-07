@@ -242,8 +242,17 @@ def run_evaluation(
                     
                     # Update sparsity and alive components
                     metrics[sae_pos]['sparsity_l0'] += torch.norm(acts, p=0, dim=-1).mean().item() * n_tokens
-                    import pdb; pdb.set_trace()
-                    metrics[sae_pos]['alive_dict_components'].update(acts.sum(0).sum(0).nonzero().squeeze().cpu().tolist())
+                    
+                    # Get alive components, ensuring we always have a list
+                    nonzero_indices = acts.sum(0).sum(0).nonzero().squeeze().cpu()
+                    if nonzero_indices.numel() == 0:
+                        alive_indices = []
+                    elif nonzero_indices.numel() == 1:
+                        alive_indices = [nonzero_indices.item()]
+                    else:
+                        alive_indices = nonzero_indices.tolist()
+                    
+                    metrics[sae_pos]['alive_dict_components'].update(alive_indices)
 
                     # Collect non-zero activations for explanation generation
                     data_indices, neuron_indices = acts.sum(1).nonzero(as_tuple=True)
