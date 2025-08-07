@@ -28,8 +28,7 @@ from data import create_dataloaders
 from models import SAETransformer, SAETransformerOutput
 from utils.io import (
     load_config, 
-    save_activation_data, 
-    load_activation_data, 
+    save_activation_data_to_wandb,
     load_activation_data_from_wandb,
     save_evaluation_results_to_wandb
 )
@@ -126,54 +125,45 @@ def run_evaluation(
         run_config = run.config
         run_config['data']['n_eval_samples'] = n_eval_samples
         config = load_config(run_config, Config)
-        run_dir = f"evaluation_results/{config.wandb_run_name}-{run_id}"
 
+        # Initialize Wandb run for this specific run (if not already active)
+        # This allows us to save artifacts to the same run
+        wandb.init(
+            project=wandb_project.split("/")[-1],  # Extract project name
+            entity=wandb_project.split("/")[0],    # Extract entity  
+            id=run_id,  # Use the same run ID
+            resume="allow",  # Allow resuming existing run
+            reinit=True
+        )
+        
         _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
         metrics = {}
         accumulated_data = None
         all_token_ids = None
+        loaded_metrics = None
         tokenizer = AutoTokenizer.from_pretrained(config.data.tokenizer_name)
         model = SAETransformer.from_wandb(f"{wandb_project}/{run_id}").to(device)
         model.saes.eval()
 
-        # Try to load existing data - first local, then Wandb
-        accumulated_data = None
-        all_token_ids = None
-        loaded_metrics = None
-        
-        # Try local files first
-        if os.path.exists(run_dir):
-            try:
-                accumulated_data, loaded_metrics, all_token_ids = load_activation_data(run_dir)
-                print(f"Loaded activation data from local directory: {run_dir}")
-                if loaded_metrics is not None:
-                    metrics = loaded_metrics
-                    print(f"Loaded existing metrics for {len(metrics)} SAE positions")
-                if all_token_ids is not None:
-                    print(f"Loaded token IDs from local directory")
-            except Exception as e:
-                print(f"Failed to load from local directory: {e}")
-        
-        # If no local data, try Wandb
-        if accumulated_data is None:
-            print(f"Attempting to load activation data from Wandb for run {run_id}...")
-            try:
-                accumulated_data, wandb_metrics, all_token_ids = load_activation_data_from_wandb(
-                    run_id, artifact_name="activation_data", project=wandb_project
-                )
+        # Try to load existing data from Wandb
+        print(f"Attempting to load activation data from Wandb for run {run_id}...")
+        try:
+            accumulated_data, loaded_metrics, all_token_ids = load_activation_data_from_wandb(
+                run_id, artifact_name="activation_data", project=wandb_project
+            )
+            
+            if loaded_metrics is not None:
+                metrics = loaded_metrics
+                print(f"Loaded existing metrics from Wandb for {len(metrics)} SAE positions")
+            
+            print(f"Successfully loaded activation data from Wandb artifacts")
+            if all_token_ids is not None:
+                print(f"Loaded token IDs from Wandb artifacts")
                 
-                if wandb_metrics is not None:
-                    metrics = wandb_metrics
-                    print(f"Loaded existing metrics from Wandb for {len(metrics)} SAE positions")
-                
-                print(f"Successfully loaded activation data from Wandb artifacts")
-                if all_token_ids is not None:
-                    print(f"Loaded token IDs from Wandb artifacts")
-                    
-            except (FileNotFoundError, RuntimeError) as e:
-                print(f"No existing activation data found: {e}")
-                print("Will compute activation data and metrics from scratch")
-        
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"No existing activation data found: {e}")
+            print("Will compute activation data and metrics from scratch")
+
         # If no data was loaded, we'll compute everything fresh
         if accumulated_data is None:
             print(f"Obtaining features for {run_id}")
@@ -295,47 +285,21 @@ def run_evaluation(
                 metrics[sae_pos]['alive_dict_components'] = num_alive
                 metrics[sae_pos]['alive_dict_components_proportion'] = num_alive / total_dict_size
                 
-            # After all batches are processed, save and analyze the accumulated data
+            # After all batches are processed, save data to Wandb
             if save_activation_data_flag:
-                print("Saving accumulated activation data...")
-                
-                # Initialize a temporary Wandb run for uploading artifacts
-                # We'll use the same project but create a temporary run for artifact upload
-                temp_run = None
+                print("Saving accumulated activation data to Wandb...")
                 try:
-                    temp_run = wandb.init(
-                        project=wandb_project.split("/")[-1],  # Extract project name from "user/project"
-                        entity=wandb_project.split("/")[0],    # Extract entity from "user/project"
-                        name=f"eval_{run.name}",
-                        tags=["evaluation", "artifacts"],
-                        job_type="evaluation",
-                        reinit=True
-                    )
-                    
-                    save_activation_data(
-                        accumulated_data, 
-                        run_dir,
-                        metrics=metrics,
+                    # Use the current run context - no need for temporary runs
+                    save_activation_data_to_wandb(
+                        accumulated_data=accumulated_data,
+                        run_id=run_id,
+                        run_name=run.name,
                         all_token_ids=all_token_ids,
-                        upload_to_wandb=upload_to_wandb, 
-                        run_id=run_id, 
-                        run_name=run.name
+                        metrics=metrics
                     )
                 except Exception as e:
                     print(f"Warning: Failed to upload to Wandb: {e}")
-                    print("Saving locally only...")
-                    save_activation_data(
-                        accumulated_data, 
-                        run_dir,
-                        metrics=metrics,
-                        all_token_ids=all_token_ids
-                    )
-                finally:
-                    if temp_run is not None:
-                        wandb.finish()
-        
-        # Metrics are now saved automatically in save_activation_data function
-        
+
         # Collect metrics for pareto plot
         run_metrics = {
             'run_id': run_id,
@@ -494,39 +458,23 @@ def run_evaluation(
                     except Exception as e:
                         print(f"    Error processing neuron {neuron_idx_item}: {e}")
             
-            # Save all explanations to a JSON file
-            output_explanation_file = os.path.join(run_dir, "explanations.json")
-            os.makedirs(os.path.dirname(output_explanation_file), exist_ok=True)
-            with open(output_explanation_file, "w") as f:
-                json.dump(explanations_for_run, f, indent=2)
-            print(f"\nSaved explanations for run {run_id} to {output_explanation_file}")
-            
             # Upload evaluation results to Wandb if enabled
             if upload_to_wandb:
                 try:
-                    # Initialize a temporary Wandb run for uploading evaluation results
-                    temp_run = wandb.init(
-                        project=wandb_project.split("/")[-1],  # Extract project name
-                        entity=wandb_project.split("/")[0],    # Extract entity
-                        name=f"eval_results_{run.name}",
-                        tags=["evaluation", "results"],
-                        job_type="evaluation_results",
-                        reinit=True
-                    )
-                    
+                    print(f"Saving evaluation results to Wandb for run {run_id}")
                     save_evaluation_results_to_wandb(
                         metrics=metrics,
                         explanations=explanations_for_run,
                         run_id=run_id,
                         run_name=run.name
                     )
-                    
-                    wandb.finish()
                     print(f"Successfully uploaded evaluation results to Wandb for run {run_id}")
                     
                 except Exception as e:
                     print(f"Warning: Failed to upload evaluation results to Wandb: {e}")
-                    print("Continuing with local save only...")
+        
+        # Finish the current wandb run before moving to the next one
+        wandb.finish()
 
     # Create pareto plots after processing all runs
     print(f"\nCreating pareto plots from {len(all_run_metrics)} runs...")
@@ -571,12 +519,7 @@ def main():
     
     parser.add_argument("--evaluate_explanations", action="store_true",
                        help="Evaluate explanation quality (default: False)")
-    
-    
-    
-    # Device parameter
-    parser.add_argument("--device", type=str, default="cuda:0",
-                       help="Device to run evaluation on (default: cuda:0)")
+
     
     args = parser.parse_args()
     
@@ -593,7 +536,7 @@ def main():
         generate_explanations=args.generate_explanations,
         evaluate_explanations=args.evaluate_explanations,
         upload_to_wandb=args.upload_to_wandb,
-        device=args.device
+        device='cuda:0' if torch.cuda.is_available() else 'cpu'
     )
 
 
