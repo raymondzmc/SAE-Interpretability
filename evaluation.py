@@ -241,7 +241,7 @@ def run_evaluation(
                     metrics[sae_pos]['explained_variance'] += exp_var * n_tokens
                     
                     # Get activations based on SAE type
-                    if config.saes.sae_type == SAEType.HardConcrete:
+                    if config.saes.sae_type == SAEType.HARD_CONCRETE:
                         acts = sae_output.z if hasattr(sae_output, 'z') else sae_output.c
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
