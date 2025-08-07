@@ -485,10 +485,11 @@ def run_evaluation(
         
         # Finish the current wandb run before moving to the next one
         wandb.finish()
+        break
 
     # Create pareto plots after processing all runs
-    print(f"\nCreating pareto plots from {len(all_run_metrics)} runs...")
-    create_pareto_plots(all_run_metrics)
+    # print(f"\nCreating pareto plots from {len(all_run_metrics)} runs...")
+    # create_pareto_plots(all_run_metrics)
 
 
 def main():
