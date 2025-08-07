@@ -242,6 +242,7 @@ def run_evaluation(
                     
                     # Update sparsity and alive components
                     metrics[sae_pos]['sparsity_l0'] += torch.norm(acts, p=0, dim=-1).mean().item() * n_tokens
+                    import pdb; pdb.set_trace()
                     metrics[sae_pos]['alive_dict_components'].update(acts.sum(0).sum(0).nonzero().squeeze().cpu().tolist())
 
                     # Collect non-zero activations for explanation generation
