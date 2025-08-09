@@ -110,7 +110,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
             entity=args.wandb_project.split("/")[0],    # Extract entity  
             id=run_id,  # Use the same run ID
             resume="allow",  # Allow resuming existing run
-            return_previous=True
+            reinit="finish_previous"
         )
         
         _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
