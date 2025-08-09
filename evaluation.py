@@ -91,8 +91,9 @@ def run_evaluation(args: argparse.Namespace) -> None:
     runs = api.runs(args.wandb_project)
 
     if args.filter_runs_by_name is not None:
+        old_len = len(runs)
         runs = [run for run in runs if args.filter_runs_by_name in run.name]
-        print(f"Found {len(runs)} runs matching filter: {args.filter_runs_by_name}")
+        print(f"Found {len(runs)}/{old_len} runs matching filter: {args.filter_runs_by_name}")
 
     # Collect all metrics for pareto plots
     all_run_metrics = []
@@ -463,7 +464,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
         
         # Finish the current wandb run before moving to the next one
         wandb.finish()
-        break
 
     # Create pareto plots after processing all runs
     # print(f"\nCreating pareto plots from {len(all_run_metrics)} runs...")
