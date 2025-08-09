@@ -74,36 +74,9 @@ async def _run_simulation_and_scoring(
     return score, scored_simulation
 
 
-def run_evaluation(
-    window_size: int = 64,
-    num_neurons: int = 300,
-    num_features_to_explain: int = 10,
-    n_eval_samples: int = 50000,
-    explanation_model: str = "gpt-4o",
-    simulator_model: str = "gpt-4o-mini",
-    wandb_project: str = "raymondl/tinystories-1m",
-    save_activation_data_flag: bool = False,
-    generate_explanations: bool = False,
-    evaluate_explanations: bool = False,
-    upload_to_wandb: bool = False,
-    device: str = "cuda:0"
-) -> None:
+def run_evaluation(args: argparse.Namespace) -> None:
     """
     Run SAE evaluation including activation data collection, neuron explanation generation, and analysis.
-    
-    Args:
-        window_size: Size of token windows for processing
-        num_neurons: Number of top neurons to process per layer
-        num_features_to_explain: Number of top activation examples to use for explanation
-        n_eval_samples: Number of evaluation samples to process
-        explanation_model: Model to use for generating explanations
-        simulator_model: Model to use for simulation and scoring
-        wandb_project: Wandb project in format "entity/project"
-        save_activation_data_flag: Whether to save activation data
-        generate_explanations: Whether to generate neuron explanations
-        evaluate_explanations: Whether to evaluate explanation quality
-        upload_to_wandb: Whether to upload results to Wandb
-        device: Device to run evaluation on
     """
     
     # OpenAI model mappings
@@ -112,10 +85,14 @@ def run_evaluation(
         "gpt-4o": "gpt-4o-2024-11-20",
     }
 
-    device = torch.device(device)
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     wandb.login(key=settings.wandb_api_key)
     api = wandb.Api()
-    runs = api.runs(wandb_project)
+    runs = api.runs(args.wandb_project)
+
+    if args.filter_runs_by_name is not None:
+        runs = [run for run in runs if args.filter_runs_by_name in run.name]
+        print(f"Found {len(runs)} runs matching filter: {args.filter_runs_by_name}")
 
     # Collect all metrics for pareto plots
     all_run_metrics = []
@@ -123,14 +100,14 @@ def run_evaluation(
     for run in runs:
         run_id = run.id
         run_config = run.config
-        run_config['data']['n_eval_samples'] = n_eval_samples
+        run_config['data']['n_eval_samples'] = args.n_eval_samples
         config = load_config(run_config, Config)
 
         # Initialize Wandb run for this specific run (if not already active)
         # This allows us to save artifacts to the same run
         wandb.init(
-            project=wandb_project.split("/")[-1],  # Extract project name
-            entity=wandb_project.split("/")[0],    # Extract entity  
+            project=args.wandb_project.split("/")[-1],  # Extract project name
+            entity=args.wandb_project.split("/")[0],    # Extract entity  
             id=run_id,  # Use the same run ID
             resume="allow",  # Allow resuming existing run
             reinit=True
@@ -142,14 +119,14 @@ def run_evaluation(
         all_token_ids = None
         loaded_metrics = None
         tokenizer = AutoTokenizer.from_pretrained(config.data.tokenizer_name)
-        model = SAETransformer.from_wandb(f"{wandb_project}/{run_id}").to(device)
+        model = SAETransformer.from_wandb(f"{args.wandb_project}/{run_id}").to(device)
         model.saes.eval()
 
         # Try to load existing data from Wandb
         print(f"Attempting to load activation data from Wandb for run {run_id}...")
         try:
             accumulated_data, loaded_metrics, all_token_ids = load_activation_data_from_wandb(
-                run_id, artifact_name="activation_data", project=wandb_project
+                run_id, artifact_name="activation_data", project=args.wandb_project
             )
             
             if loaded_metrics is not None:
@@ -175,7 +152,7 @@ def run_evaluation(
             accumulated_data = {}
             for sae_pos in model.raw_sae_positions:
                 accumulated_data[sae_pos] = {
-                    'nonzero_activations': torch.empty(0, window_size, dtype=torch.float16),
+                    'nonzero_activations': torch.empty(0, args.window_size, dtype=torch.float16),
                     'data_indices': torch.empty(0, dtype=torch.long),
                     'neuron_indices': torch.empty(0, dtype=torch.long),
                 }
@@ -193,13 +170,13 @@ def run_evaluation(
                 
                 # Reshape token_ids to break into chunks of window_size
                 batch_size, seq_len = token_ids.shape
-                if seq_len % window_size != 0:
-                    raise ValueError(f"Sequence length {seq_len} is not divisible by window_size {window_size}")
+                if seq_len % args.window_size != 0:
+                    raise ValueError(f"Sequence length {seq_len} is not divisible by window_size {args.window_size}")
 
-                num_chunks = seq_len // window_size
+                num_chunks = seq_len // args.window_size
                 chunked_batch_size = batch_size * num_chunks
-                token_ids_chunked = token_ids.view(batch_size, num_chunks, window_size)
-                token_ids_chunked = token_ids_chunked.reshape(chunked_batch_size, window_size)
+                token_ids_chunked = token_ids.view(batch_size, num_chunks, args.window_size)
+                token_ids_chunked = token_ids_chunked.reshape(chunked_batch_size, args.window_size)
                 
                 n_tokens = token_ids_chunked.shape[0] * token_ids_chunked.shape[1]
                 total_tokens += n_tokens
@@ -254,7 +231,7 @@ def run_evaluation(
                     
                     metrics[sae_pos]['alive_dict_components'].update(alive_indices)
 
-                    if save_activation_data_flag:
+                    if args.save_activation_data_flag:
                         # Collect non-zero activations for explanation generation
                         data_indices, neuron_indices = acts.sum(1).nonzero(as_tuple=True)
                         if data_indices.numel() > 0:
@@ -297,7 +274,7 @@ def run_evaluation(
                 metrics[sae_pos]['alive_dict_components_proportion'] = num_alive / total_dict_size
                 
             # After all batches are processed, save data to Wandb
-            if save_activation_data_flag:
+            if args.save_activation_data_flag:
                 print("Saving accumulated activation data to Wandb...")
                 try:
                     # Use the current run context - no need for temporary runs
@@ -321,10 +298,10 @@ def run_evaluation(
         
         all_run_metrics.append(run_metrics)
         
-        if generate_explanations:
+        if args.generate_explanations:
             # Initialize TokenActivationPairExplainer
             explainer = TokenActivationPairExplainer(
-                model_name=OPENAI_MODELS.get(explanation_model, explanation_model), 
+                model_name=OPENAI_MODELS.get(args.explanation_model, args.explanation_model), 
                 prompt_format=PromptFormat.HARMONY_V4
             )
             
@@ -350,14 +327,14 @@ def run_evaluation(
                 
                 # Sort neurons by total activation (descending) and take top NUM_NEURONS
                 sorted_indices = torch.argsort(neuron_total_activations, descending=True)
-                top_neuron_indices = sorted_indices[:num_neurons]
+                top_neuron_indices = sorted_indices[:args.num_neurons]
                 top_neurons = unique_neurons[top_neuron_indices]
                 top_counts = counts[top_neuron_indices]
                 
                 # Take top neurons for explanation (we'll use top examples regardless of count)
                 neurons_to_explain = top_neurons
                 
-                print(f"SAE position {sae_pos}: {len(unique_neurons)} total neurons, taking top {num_neurons}")
+                print(f"SAE position {sae_pos}: {len(unique_neurons)} total neurons, taking top {args.num_neurons}")
                 print(f"  Processing {len(neurons_to_explain)} neurons for explanation...")
                 
                 # Process each neuron for explanation
@@ -376,7 +353,7 @@ def run_evaluation(
                     sorted_indices = torch.argsort(max_activations_per_example, descending=True)
                     
                     # Take top num_features_to_explain examples (or fewer if not enough examples)
-                    top_k = min(num_features_to_explain, len(sorted_indices))
+                    top_k = min(args.num_features_to_explain, len(sorted_indices))
                     top_indices = sorted_indices[:top_k]
                     
                     # Convert to activation records for top examples only
@@ -424,7 +401,7 @@ def run_evaluation(
                             print(f"    Neuron {neuron_idx_item}: {explanation}")
                             
                             explanation_score = None
-                            if evaluate_explanations:
+                            if args.evaluate_explanations:
                                 # Prepare records for scoring (clean up tokens)
                                 temp_activation_records = [
                                     ActivationRecord(
@@ -446,7 +423,7 @@ def run_evaluation(
                                     _run_simulation_and_scoring(
                                         explanation_text=explanation,
                                         records_for_simulation=temp_activation_records,
-                                        model_name_for_simulator=OPENAI_MODELS.get(simulator_model, simulator_model),
+                                        model_name_for_simulator=OPENAI_MODELS.get(args.simulator_model, args.simulator_model),
                                         few_shot_example_set=FewShotExampleSet.JL_FINE_TUNED,
                                         prompt_format=PromptFormat.HARMONY_V4
                                     )
@@ -470,7 +447,7 @@ def run_evaluation(
                         print(f"    Error processing neuron {neuron_idx_item}: {e}")
             
             # Upload evaluation results to Wandb if enabled
-            if upload_to_wandb:
+            if args.upload_to_wandb:
                 try:
                     print(f"Saving evaluation results to Wandb for run {run_id}")
                     save_evaluation_results_to_wandb(
@@ -520,6 +497,8 @@ def main():
     # Wandb and storage parameters
     parser.add_argument("--wandb_project", type=str, default="raymondl/tinystories-1m",
                        help="Wandb project in format 'entity/project' (default: raymondl/tinystories-1m)")
+    parser.add_argument("--filter_runs_by_name", type=str, default=None,
+                       help="Filter runs by a specific string in their name (default: None)")
     
     # Execution flags
     parser.add_argument("--save_activation_data", action="store_true", default=False,
@@ -538,20 +517,7 @@ def main():
     args = parser.parse_args()
     
     # Run the evaluation with parsed arguments
-    run_evaluation(
-        window_size=args.window_size,
-        num_neurons=args.num_neurons,
-        num_features_to_explain=args.num_features_to_explain,
-        n_eval_samples=args.n_eval_samples,
-        explanation_model=args.explanation_model,
-        simulator_model=args.simulator_model,
-        wandb_project=args.wandb_project,
-        save_activation_data_flag=args.save_activation_data,
-        generate_explanations=args.generate_explanations,
-        evaluate_explanations=args.evaluate_explanations,
-        upload_to_wandb=args.upload_to_wandb,
-        device='cuda:0' if torch.cuda.is_available() else 'cpu'
-    )
+    run_evaluation(args)
 
 
 if __name__ == "__main__":
