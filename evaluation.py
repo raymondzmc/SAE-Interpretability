@@ -254,28 +254,29 @@ def run_evaluation(
                     
                     metrics[sae_pos]['alive_dict_components'].update(alive_indices)
 
-                    # Collect non-zero activations for explanation generation
-                    data_indices, neuron_indices = acts.sum(1).nonzero(as_tuple=True)
-                    if data_indices.numel() > 0:
-                        # Extract all relevant activations at once (N, seq_len)
-                        nonzero_activations = acts[data_indices, :, neuron_indices]
+                    if save_activation_data_flag:
+                        # Collect non-zero activations for explanation generation
+                        data_indices, neuron_indices = acts.sum(1).nonzero(as_tuple=True)
+                        if data_indices.numel() > 0:
+                            # Extract all relevant activations at once (N, seq_len)
+                            nonzero_activations = acts[data_indices, :, neuron_indices]
 
-                        # Add the offset to the data indices for global indexing
-                        global_data_indices = data_indices + len(all_token_ids)
+                            # Add the offset to the data indices for global indexing
+                            global_data_indices = data_indices + len(all_token_ids)
 
-                        # Accumulate tensors for this SAE position
-                        accumulated_data[sae_pos]['nonzero_activations'] = torch.cat([
-                            accumulated_data[sae_pos]['nonzero_activations'], 
-                            nonzero_activations.cpu()
-                        ], dim=0)
-                        accumulated_data[sae_pos]['data_indices'] = torch.cat([
-                            accumulated_data[sae_pos]['data_indices'], 
-                            global_data_indices.cpu()
-                        ], dim=0)
-                        accumulated_data[sae_pos]['neuron_indices'] = torch.cat([
-                            accumulated_data[sae_pos]['neuron_indices'], 
-                            neuron_indices.cpu()
-                        ], dim=0)
+                            # Accumulate tensors for this SAE position
+                            accumulated_data[sae_pos]['nonzero_activations'] = torch.cat([
+                                accumulated_data[sae_pos]['nonzero_activations'], 
+                                nonzero_activations.cpu()
+                            ], dim=0)
+                            accumulated_data[sae_pos]['data_indices'] = torch.cat([
+                                accumulated_data[sae_pos]['data_indices'], 
+                                global_data_indices.cpu()
+                            ], dim=0)
+                            accumulated_data[sae_pos]['neuron_indices'] = torch.cat([
+                                accumulated_data[sae_pos]['neuron_indices'], 
+                                neuron_indices.cpu()
+                            ], dim=0)
 
                 # Store tokenized sequences for explanation generation
                 chunked_tokens = [tokenizer.convert_ids_to_tokens(token_ids_chunked[i]) for i in range(chunked_batch_size)]
@@ -501,6 +502,8 @@ def main():
                        help="Size of token windows for processing (default: 64)")
     parser.add_argument("--num_neurons", type=int, default=300,
                        help="Number of top neurons to process per layer (default: 300)")
+    parser.add_argument("--min_activated_features", type=int, default=200,
+                       help="Minimum number of activated features to use for explanation (default: 200)")
     parser.add_argument("--num_features_to_explain", type=int, default=10,
                        help="Number of top activation examples to use for explanation (default: 10)")
     parser.add_argument("--n_eval_samples", type=int, default=50000,
@@ -519,7 +522,7 @@ def main():
                        help="Wandb project in format 'entity/project' (default: raymondl/tinystories-1m)")
     
     # Execution flags
-    parser.add_argument("--save_activation_data", action="store_true", default=True,
+    parser.add_argument("--save_activation_data", action="store_true", default=False,
                        help="Save activation data (default: True)")
     
     parser.add_argument("--upload_to_wandb", action="store_true", default=True,
