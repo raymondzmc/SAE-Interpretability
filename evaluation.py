@@ -29,8 +29,10 @@ from models import SAETransformer, SAETransformerOutput
 from utils.io import (
     load_config, 
     save_activation_data_to_wandb,
+    save_metrics_to_wandb,
+    save_explanations_to_wandb,
     load_activation_data_from_wandb,
-    save_evaluation_results_to_wandb
+    load_metrics_from_wandb
 )
 from utils.enums import SAEType
 from utils.metrics import explained_variance
@@ -126,24 +128,29 @@ def run_evaluation(args: argparse.Namespace) -> None:
         # Try to load existing data from Wandb
         print(f"Attempting to load activation data from Wandb for run {run_id}...")
         try:
-            accumulated_data, loaded_metrics, all_token_ids = load_activation_data_from_wandb(
-                run_id, artifact_name="activation_data", project=args.wandb_project
+            accumulated_data, all_token_ids = load_activation_data_from_wandb(
+                run_id, project=args.wandb_project
             )
             
-            if loaded_metrics is not None:
-                metrics = loaded_metrics
-                print(f"Loaded existing metrics from Wandb for {len(metrics)} SAE positions")
-            
-            print(f"Successfully loaded activation data from Wandb artifacts")
+            print(f"Successfully loaded activation data from Wandb run files")
             if all_token_ids is not None:
-                print(f"Loaded token IDs from Wandb artifacts")
+                print(f"Loaded token IDs from Wandb run files")
                 
         except (FileNotFoundError, RuntimeError) as e:
             print(f"No existing activation data found: {e}")
             print("Will compute activation data and metrics from scratch")
+        
+        # Try to load existing metrics separately
+        try:
+            loaded_metrics = load_metrics_from_wandb(run_id, project=args.wandb_project)
+            if loaded_metrics is not None:
+                metrics = loaded_metrics
+                print(f"Loaded existing metrics from Wandb for {len(metrics)} SAE positions")
+        except Exception as e:
+            print(f"No existing metrics found: {e}")
+            print("Will compute metrics from scratch")
 
-        # If no data was loaded, we'll compute everything fresh
-        if accumulated_data is None:
+        if accumulated_data is None or len(metrics) == 0:
             print(f"Obtaining features for {run_id}")
             total_tokens = 0
             all_token_ids: list[list[str]] = []
@@ -164,7 +171,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     'explained_variance': 0.0,
                 }
             
-            # Process all batches in a single loop - compute metrics and collect activations
             total_tokens = 0
             for batch in tqdm(eval_loader, desc="Processing batches"):
                 token_ids = batch[config.data.column_name].to(device)
@@ -232,7 +238,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     
                     metrics[sae_pos]['alive_dict_components'].update(alive_indices)
 
-                    if args.save_activation_data_flag:
+                    if args.save_activation_data:
                         # Collect non-zero activations for explanation generation
                         data_indices, neuron_indices = acts.sum(1).nonzero(as_tuple=True)
                         if data_indices.numel() > 0:
@@ -275,19 +281,22 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 metrics[sae_pos]['alive_dict_components_proportion'] = num_alive / total_dict_size
                 
             # After all batches are processed, save data to Wandb
-            if args.save_activation_data_flag:
+            if args.save_activation_data:
                 print("Saving accumulated activation data to Wandb...")
                 try:
-                    # Use the current run context - no need for temporary runs
                     save_activation_data_to_wandb(
                         accumulated_data=accumulated_data,
-                        run_id=run_id,
-                        run_name=run.name,
-                        all_token_ids=all_token_ids,
-                        metrics=metrics
+                        all_token_ids=all_token_ids
                     )
                 except Exception as e:
-                    print(f"Warning: Failed to upload to Wandb: {e}")
+                    print(f"Warning: Failed to upload activation data to Wandb: {e}")
+            
+            # Always save metrics (separate from activation data)
+            print("Saving metrics to Wandb...")
+            try:
+                save_metrics_to_wandb(metrics=metrics)
+            except Exception as e:
+                print(f"Warning: Failed to upload metrics to Wandb: {e}")
 
         # Collect metrics for pareto plot
         run_metrics = {
@@ -447,27 +456,22 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     except Exception as e:
                         print(f"    Error processing neuron {neuron_idx_item}: {e}")
             
-            # Upload evaluation results to Wandb if enabled
-            if args.upload_to_wandb:
+            # Save explanations to Wandb
+            if explanations_for_run:
                 try:
-                    print(f"Saving evaluation results to Wandb for run {run_id}")
-                    save_evaluation_results_to_wandb(
-                        metrics=metrics,
-                        explanations=explanations_for_run,
-                        run_id=run_id,
-                        run_name=run.name
-                    )
-                    print(f"Successfully uploaded evaluation results to Wandb for run {run_id}")
+                    print(f"Saving explanations to Wandb for run {run_id}")
+                    save_explanations_to_wandb(explanations=explanations_for_run)
+                    print(f"Successfully uploaded explanations to Wandb for run {run_id}")
                     
                 except Exception as e:
-                    print(f"Warning: Failed to upload evaluation results to Wandb: {e}")
+                    print(f"Warning: Failed to upload explanations to Wandb: {e}")
         
         # Finish the current wandb run before moving to the next one
         wandb.finish()
 
     # Create pareto plots after processing all runs
     # print(f"\nCreating pareto plots from {len(all_run_metrics)} runs...")
-    # create_pareto_plots(all_run_metrics)
+    create_pareto_plots(all_run_metrics)
 
 
 def main():
@@ -501,11 +505,8 @@ def main():
                        help="Filter runs by a specific string in their name (default: None)")
     
     # Execution flags
-    parser.add_argument("--save_activation_data", action="store_true", default=False,
+    parser.add_argument("--save_activation_data", action="store_true", default=True,
                        help="Save activation data (default: True)")
-    
-    parser.add_argument("--upload_to_wandb", action="store_true", default=True,
-                       help="Upload results to Wandb (default: False)")
     
     parser.add_argument("--generate_explanations", action="store_true", default=False,
                        help="Generate neuron explanations (default: False)")
