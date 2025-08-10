@@ -107,7 +107,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
         config = load_config(run_config, Config)
 
         # Initialize Wandb run for this specific run (if not already active)
-        # This allows us to save artifacts to the same run
         wandb.init(
             project=args.wandb_project.split("/")[-1],  # Extract project name
             entity=args.wandb_project.split("/")[0],    # Extract entity  
@@ -115,7 +114,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
             resume="allow",  # Allow resuming existing run
             reinit="finish_previous"
         )
-        
+
         _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
         metrics = {}
         accumulated_data = None
