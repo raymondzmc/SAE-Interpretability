@@ -279,8 +279,15 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 
                 metrics[sae_pos]['alive_dict_components'] = num_alive
                 metrics[sae_pos]['alive_dict_components_proportion'] = num_alive / total_dict_size
-                
-            # After all batches are processed, save data to Wandb
+            
+            # Always save metrics
+            print("Saving metrics to Wandb...")
+            try:
+                save_metrics_to_wandb(metrics=metrics)
+            except Exception as e:
+                print(f"Warning: Failed to upload metrics to Wandb: {e}")
+
+            # Save activation data to Wandb
             if args.save_activation_data:
                 print("Saving accumulated activation data to Wandb...")
                 try:
@@ -291,12 +298,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 except Exception as e:
                     print(f"Warning: Failed to upload activation data to Wandb: {e}")
             
-            # Always save metrics (separate from activation data)
-            print("Saving metrics to Wandb...")
-            try:
-                save_metrics_to_wandb(metrics=metrics)
-            except Exception as e:
-                print(f"Warning: Failed to upload metrics to Wandb: {e}")
+            
 
         # Collect metrics for pareto plot
         run_metrics = {
@@ -505,8 +507,8 @@ def main():
                        help="Filter runs by a specific string in their name (default: None)")
     
     # Execution flags
-    parser.add_argument("--save_activation_data", action="store_true", default=True,
-                       help="Save activation data (default: True)")
+    parser.add_argument("--save_activation_data", action="store_true", default=False,
+                       help="Save activation data (default: False)")
     
     parser.add_argument("--generate_explanations", action="store_true", default=False,
                        help="Generate neuron explanations (default: False)")
