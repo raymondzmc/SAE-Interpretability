@@ -84,31 +84,32 @@ def save_activation_data_to_wandb(
         accumulated_data: Dictionary mapping SAE positions to activation data
         all_token_ids: Optional list of token ID sequences to save alongside activation data
     """
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        activation_data_dir = temp_path / "activation_data"
-        activation_data_dir.mkdir()
-        
-        # Save each layer's data to temporary files
-        for sae_pos, data in accumulated_data.items():
-            # Replace dots and other characters that might be problematic in filenames
-            safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
-            file_path = activation_data_dir / f"{safe_layer_name}.pt"
-            torch.save(data, file_path)
-            print(f"Staged activation data for {sae_pos} at {file_path}")
-        
-        # Save token IDs if provided
-        if all_token_ids is not None:
-            token_ids_path = activation_data_dir / "all_token_ids.pt"
-            torch.save(all_token_ids, token_ids_path)
-            print(f"Staged token IDs at {token_ids_path}")
-        
-        # Upload activation data directory to current run
-        try:
-            wandb.save(str(activation_data_dir / "*"), base_path=str(temp_path), policy="now")
-            print(f"Successfully uploaded activation data to Wandb run files")
-        except Exception as e:
-            print(f"Warning: Failed to upload activation data to Wandb: {e}")
+    # Ensure we have an active run
+    assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
+    run_dir = Path(wandb.run.dir)
+
+    activation_data_dir = run_dir / "activation_data"
+    activation_data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save each layer's data to run dir
+    for sae_pos, data in accumulated_data.items():
+        safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
+        file_path = activation_data_dir / f"{safe_layer_name}.pt"
+        torch.save(data, file_path)
+        print(f"Staged activation data for {sae_pos} at {file_path}")
+    
+    # Save token IDs if provided
+    if all_token_ids is not None:
+        token_ids_path = activation_data_dir / "all_token_ids.pt"
+        torch.save(all_token_ids, token_ids_path)
+        print(f"Staged token IDs at {token_ids_path}")
+    
+    # Upload activation data directory to current run (preserve activation_data/ prefix only)
+    try:
+        wandb.save(str(activation_data_dir / "*"), base_path=str(run_dir), policy="now")
+        print(f"Successfully uploaded activation data to Wandb run files")
+    except Exception as e:
+        print(f"Warning: Failed to upload activation data to Wandb: {e}")
 
 
 def save_metrics_to_wandb(
@@ -119,21 +120,21 @@ def save_metrics_to_wandb(
     Args:
         metrics: Dictionary mapping SAE positions to their evaluation metrics
     """
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        
-        # Save metrics as JSON
-        metrics_path = temp_path / "metrics.json"
-        with open(metrics_path, "w") as f:
-            json.dump(metrics, f, indent=2)
-        print(f"Staged metrics at {metrics_path}")
-        
-        # Upload metrics file to current run
-        try:
-            wandb.save(str(metrics_path), policy="now")
-            print(f"Successfully uploaded metrics to Wandb run files")
-        except Exception as e:
-            print(f"Warning: Failed to upload metrics to Wandb: {e}")
+    assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
+    run_dir = Path(wandb.run.dir)
+
+    # Save metrics as JSON at run root
+    metrics_path = run_dir / "metrics.json"
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Staged metrics at {metrics_path}")
+    
+    # Upload metrics file to current run at root (no files/ prefix)
+    try:
+        wandb.save(str(metrics_path), base_path=str(run_dir), policy="now")
+        print(f"Successfully uploaded metrics to Wandb run files")
+    except Exception as e:
+        print(f"Warning: Failed to upload metrics to Wandb: {e}")
 
 
 # Local file functions removed - now only using Wandb artifacts
@@ -240,11 +241,12 @@ def load_metrics_from_wandb(
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             
-            # Try to download metrics.json
+            # Try to download metrics.json (root or nested under a folder like 'files/')
             try:
                 for file in run.files():
-                    if file.name == "metrics.json":
-                        local_path = temp_path / "metrics.json"
+                    if file.name == "metrics.json" or file.name.endswith("/metrics.json"):
+                        local_path = temp_path / file.name
+                        local_path.parent.mkdir(parents=True, exist_ok=True)
                         file.download(root=temp_dir, replace=True)
                         
                         with open(local_path, "r") as f:
@@ -273,41 +275,39 @@ def save_explanations_to_wandb(
     Args:
         explanations: Dictionary mapping neuron keys to explanation data
     """
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        
-        # Save explanations as JSON
-        explanations_path = temp_path / "explanations.json"
-        with open(explanations_path, "w") as f:
-            json.dump(explanations, f, indent=2)
-        print(f"Staged explanations at {explanations_path}")
-        
-        # Create summary statistics
-        summary_stats = {
-            "num_explanations": len(explanations),
-            "explained_neurons_per_layer": {}
-        }
-        
-        # Count explanations per layer
-        for key in explanations.keys():
-            if "_neuron_" in key:
-                layer_name = key.split("_neuron_")[0]
-                if layer_name not in summary_stats["explained_neurons_per_layer"]:
-                    summary_stats["explained_neurons_per_layer"][layer_name] = 0
-                summary_stats["explained_neurons_per_layer"][layer_name] += 1
-        
-        summary_path = temp_path / "explanation_summary.json"
-        with open(summary_path, "w") as f:
-            json.dump(summary_stats, f, indent=2)
-        print(f"Staged explanation summary at {summary_path}")
-        
-        # Upload files to current run
-        try:
-            wandb.save(str(explanations_path), policy="now")
-            wandb.save(str(summary_path), policy="now")
-            print(f"Successfully uploaded explanations to Wandb run files")
-        except Exception as e:
-            print(f"Warning: Failed to upload explanations to Wandb: {e}")
+    assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
+    run_dir = Path(wandb.run.dir)
+
+    # Save explanations at run root
+    explanations_path = run_dir / "explanations.json"
+    with open(explanations_path, "w") as f:
+        json.dump(explanations, f, indent=2)
+    print(f"Staged explanations at {explanations_path}")
+
+    # Create summary statistics at run root
+    summary_stats = {
+        "num_explanations": len(explanations),
+        "explained_neurons_per_layer": {}
+    }
+    for key in explanations.keys():
+        if "_neuron_" in key:
+            layer_name = key.split("_neuron_")[0]
+            if layer_name not in summary_stats["explained_neurons_per_layer"]:
+                summary_stats["explained_neurons_per_layer"][layer_name] = 0
+            summary_stats["explained_neurons_per_layer"][layer_name] += 1
+
+    summary_path = run_dir / "explanation_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary_stats, f, indent=2)
+    print(f"Staged explanation summary at {summary_path}")
+    
+    # Upload files to current run at root (no files/ prefix)
+    try:
+        wandb.save(str(explanations_path), base_path=str(run_dir), policy="now")
+        wandb.save(str(summary_path), base_path=str(run_dir), policy="now")
+        print(f"Successfully uploaded explanations to Wandb run files")
+    except Exception as e:
+        print(f"Warning: Failed to upload explanations to Wandb: {e}")
 
 
 def load_explanations_from_wandb(
@@ -338,11 +338,12 @@ def load_explanations_from_wandb(
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             
-            # Try to download explanations.json
+            # Try to download explanations.json (root or nested under a folder like 'files/')
             try:
                 for file in run.files():
-                    if file.name == "explanations.json":
-                        local_path = temp_path / "explanations.json"
+                    if file.name == "explanations.json" or file.name.endswith("/explanations.json"):
+                        local_path = temp_path / file.name
+                        local_path.parent.mkdir(parents=True, exist_ok=True)
                         file.download(root=temp_dir, replace=True)
                         
                         with open(local_path, "r") as f:
