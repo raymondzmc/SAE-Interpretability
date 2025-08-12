@@ -27,10 +27,21 @@ def explained_variance(
     if layer_norm_flag:
         pred = layer_norm(pred)
         target = layer_norm(target)
-    sample_dims = tuple(range(pred.ndim - 1))
-    per_token_l2_loss = (pred - target).pow(2).sum(dim=-1)
-    total_variance = (target - target.mean(dim=sample_dims)).pow(2).sum(dim=-1)
-    return 1 - per_token_l2_loss / total_variance
+    
+    # Calculate residual sum of squares (squared errors)
+    residual_sum_of_squares = (pred - target).pow(2).sum(dim=-1)
+    
+    # Calculate total sum of squares (variance in target)
+    # We want to compute variance across the feature dimension only
+    target_mean = target.mean(dim=-1, keepdim=True)
+    total_sum_of_squares = (target - target_mean).pow(2).sum(dim=-1)
+    
+    # Explained variance: 1 - (RSS / TSS)
+    # Add small epsilon to avoid division by zero
+    eps = 1e-8
+    explained_var = 1 - residual_sum_of_squares / (total_sum_of_squares + eps)
+    
+    return explained_var
 
 
 @torch.inference_mode()
@@ -45,11 +56,12 @@ def reconstruction_metrics(output: SAETransformerOutput,) -> dict[str, float]:
     """
     reconstruction_metrics = {}
     for name, sae_output in output.sae_outputs.items():
+        # Fix parameter order: pred first, target second
         var = explained_variance(
-            sae_output.input.detach().clone(), sae_output.output, layer_norm_flag=False
+            sae_output.output, sae_output.input.detach().clone(), layer_norm_flag=False
         )
         var_ln = explained_variance(
-            sae_output.input.detach().clone(), sae_output.output, layer_norm_flag=True
+            sae_output.output, sae_output.input.detach().clone(), layer_norm_flag=True
         )
         reconstruction_metrics[f"explained_variance/{name}"] = var.mean()
         reconstruction_metrics[f"explained_variance_std/{name}"] = var.std()

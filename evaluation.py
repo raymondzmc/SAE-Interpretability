@@ -104,9 +104,15 @@ def run_evaluation(args: argparse.Namespace) -> None:
         run_id = run.id
         run_config = run.config
         run_config['data']['n_eval_samples'] = args.n_eval_samples
-        config = load_config(run_config, Config)
+        
+        # Override n_train_samples if specified (to avoid slow data skipping)
+        if args.override_n_train_samples is not None:
+            print(f"Overriding n_train_samples: {run_config['data']['n_train_samples']} -> {args.override_n_train_samples}")
+            run_config['data']['n_train_samples'] = args.override_n_train_samples
+            
+        config: Config = load_config(run_config, Config)
 
-        # Initialize Wandb run for this specific run (if not already active)
+        # Initialize Wandb run for this specific run (resume original run)
         wandb.init(
             project=args.wandb_project.split("/")[-1],  # Extract project name
             entity=args.wandb_project.split("/")[0],    # Extract entity  
@@ -142,9 +148,11 @@ def run_evaluation(args: argparse.Namespace) -> None:
         # Try to load existing metrics separately
         try:
             loaded_metrics = load_metrics_from_wandb(run_id, project=args.wandb_project)
-            if loaded_metrics is not None:
+            if loaded_metrics is not None and not args.force_recompute:
                 metrics = loaded_metrics
                 print(f"Loaded existing metrics from Wandb for {len(metrics)} SAE positions")
+            elif loaded_metrics is not None and args.force_recompute:
+                print(f"Found existing metrics but --force_recompute is set, will recompute")
         except Exception as e:
             print(f"No existing metrics found: {e}")
             print("Will compute metrics from scratch")
@@ -515,6 +523,11 @@ def main():
     parser.add_argument("--evaluate_explanations", action="store_true",
                        help="Evaluate explanation quality (default: False)")
 
+    parser.add_argument("--force_recompute", action="store_true", default=False,
+                       help="Force recomputation of metrics even if existing ones are found (default: False)")
+
+    parser.add_argument("--override_n_train_samples", type=int, default=None,
+                       help="Override n_train_samples to avoid slow data skipping (default: None - use config value)")
     
     args = parser.parse_args()
     

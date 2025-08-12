@@ -209,3 +209,6 @@ __marimo__/
 wandb/
 output/
 experiment_outputs/
+
+# Wandb artifacts cache (downloaded evaluation data)
+artifacts/

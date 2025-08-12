@@ -1,5 +1,5 @@
 from models.saes.base import SAEConfig, SAEOutput, BaseSAE, SAELoss
-from models.saes.relu_sae import ReluSAE
+from models.saes.relu_sae import ReluSAE, ReLUSAEConfig
 from models.saes.hc_sae import HardConcreteSAE, HardConcreteSAEConfig, HardConcreteSAEOutput
 from models.saes.gated_sae import (
     GatedSAE, GatedSAEConfig, GatedSAEOutput,
@@ -28,10 +28,19 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
     sae_type = SAEType(config_dict["sae_type"])
     
     if sae_type == SAEType.HARD_CONCRETE:
-        return HardConcreteSAEConfig.model_validate(config_dict)
+        # Bandaid fix for existing runs: infer input_dependent_gates from name if missing
+        config_dict_copy = config_dict.copy()
+        if "input_dependent_gates" not in config_dict_copy:
+            name = config_dict_copy.get("name", "")
+            if "no_learned_gates" in name:
+                config_dict_copy["input_dependent_gates"] = False
+                print(f"Bandaid fix: Setting input_dependent_gates=False based on name '{name}'")
+            else:
+                config_dict_copy["input_dependent_gates"] = True
+                print(f"Bandaid fix: Setting input_dependent_gates=True based on name '{name}'")
+        return HardConcreteSAEConfig.model_validate(config_dict_copy)
     elif sae_type == SAEType.RELU:
-        # For now, use base SAEConfig for ReLU SAEs
-        return SAEConfig.model_validate(config_dict)
+        return ReLUSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED:
         return GatedSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED_HARD_CONCRETE:
@@ -51,12 +60,16 @@ __all__ = [
     "SAELoss",
     "SAEOutput",
     "ReluSAE",
+    "ReLUSAEConfig",
     "HardConcreteSAE", 
     "HardConcreteSAEConfig", 
     "HardConcreteSAEOutput",
     "GatedSAE",
     "GatedSAEConfig",
     "GatedSAEOutput",
+    "GatedHardConcreteSAE",
+    "GatedHardConcreteSAEConfig",
+    "GatedHardConcreteSAEOutput",
     "create_sae_config",
     "AVAILABLE_SAE_TYPES",
     "IMPLEMENTED_SAE_TYPES",

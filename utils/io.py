@@ -78,7 +78,7 @@ def save_activation_data_to_wandb(
     accumulated_data: dict[str, dict[str, torch.Tensor]], 
     all_token_ids: list[list[str]] | None = None,
 ) -> None:
-    """Save accumulated activation data directly to the current Wandb run's files directory.
+    """Save accumulated activation data as Wandb artifacts to the current run.
     
     Args:
         accumulated_data: Dictionary mapping SAE positions to activation data
@@ -86,55 +86,96 @@ def save_activation_data_to_wandb(
     """
     # Ensure we have an active run
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
-    run_dir = Path(wandb.run.dir)
 
-    activation_data_dir = run_dir / "activation_data"
-    activation_data_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save each layer's data to run dir
-    for sae_pos, data in accumulated_data.items():
-        safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
-        file_path = activation_data_dir / f"{safe_layer_name}.pt"
-        torch.save(data, file_path)
-        print(f"Staged activation data for {sae_pos} at {file_path}")
-    
-    # Save token IDs if provided
-    if all_token_ids is not None:
-        token_ids_path = activation_data_dir / "all_token_ids.pt"
-        torch.save(all_token_ids, token_ids_path)
-        print(f"Staged token IDs at {token_ids_path}")
-    
-    # Upload activation data directory to current run (preserve activation_data/ prefix only)
-    try:
-        wandb.save(str(activation_data_dir / "*"), base_path=str(run_dir), policy="now")
-        print(f"Successfully uploaded activation data to Wandb run files")
-    except Exception as e:
-        print(f"Warning: Failed to upload activation data to Wandb: {e}")
+    # Create temporary directory for staging files
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        activation_data_dir = temp_path / "activation_data"
+        activation_data_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save each layer's data to temp files
+        for sae_pos, data in accumulated_data.items():
+            safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
+            file_path = activation_data_dir / f"{safe_layer_name}.pt"
+            torch.save(data, file_path)
+            print(f"Staged activation data for {sae_pos} at {file_path}")
+        
+        # Save token IDs if provided
+        if all_token_ids is not None:
+            token_ids_path = activation_data_dir / "all_token_ids.pt"
+            torch.save(all_token_ids, token_ids_path)
+            print(f"Staged token IDs at {token_ids_path}")
+        
+        try:
+            # Create artifact name with run name and ID for easy identification
+            run_name = wandb.run.name or "unnamed"
+            run_id = wandb.run.id
+            # Clean run name for artifact naming (replace invalid characters)
+            clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+            artifact_name = f"evaluation_activation_data_{clean_run_name}_{run_id}"
+            
+            # Create artifact for activation data with alias to override existing
+            artifact = wandb.Artifact(
+                name=artifact_name,
+                type="activation_data",
+                description=f"SAE activation data for run {run_name} ({run_id})"
+            )
+            # Add all files in the activation_data directory
+            artifact.add_dir(str(activation_data_dir), name="activation_data")
+            
+            # Log the artifact with "latest" alias to override previous versions
+            wandb.log_artifact(artifact, aliases=["latest"])
+            print(f"Successfully uploaded activation data as Wandb artifact: {artifact_name}")
+            
+        except Exception as e:
+            print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
 
 
 def save_metrics_to_wandb(
     metrics: dict[str, dict[str, Any]]
 ) -> None:
-    """Save evaluation metrics directly to the current Wandb run's files directory.
+    """Save evaluation metrics as a Wandb artifact to the current run.
     
     Args:
         metrics: Dictionary mapping SAE positions to their evaluation metrics
     """
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
-    run_dir = Path(wandb.run.dir)
-
-    # Save metrics as JSON at run root
-    metrics_path = run_dir / "metrics.json"
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Staged metrics at {metrics_path}")
     
-    # Upload metrics file to current run at root (no files/ prefix)
+    # Use a temporary file for metrics
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='metrics_') as f:
+        json.dump(metrics, f, indent=2)
+        temp_metrics_path = f.name
+    
+    print(f"Staged metrics at {temp_metrics_path}")
+    
     try:
-        wandb.save(str(metrics_path), base_path=str(run_dir), policy="now")
-        print(f"Successfully uploaded metrics to Wandb run files")
+        # Create artifact name with run name and ID for easy identification
+        run_name = wandb.run.name or "unnamed"
+        run_id = wandb.run.id
+        # Clean run name for artifact naming (replace invalid characters)
+        clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+        artifact_name = f"evaluation_metrics_{clean_run_name}_{run_id}"
+        
+        # Create artifact for metrics with alias to override existing
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type="metrics",
+            description=f"SAE evaluation metrics for run {run_name} ({run_id})"
+        )
+        artifact.add_file(temp_metrics_path, name="metrics.json")
+        
+        # Log the artifact with "latest" alias to override previous versions
+        wandb.log_artifact(artifact, aliases=["latest"])
+        print(f"Successfully uploaded metrics as Wandb artifact: {artifact_name}")
+        
     except Exception as e:
-        print(f"Warning: Failed to upload metrics to Wandb: {e}")
+        print(f"Warning: Failed to upload metrics artifact to Wandb: {e}")
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(temp_metrics_path)
+        except:
+            pass
 
 
 # Local file functions removed - now only using Wandb artifacts
@@ -144,7 +185,7 @@ def load_activation_data_from_wandb(
     run_id: str,
     project: str = "raymondl/tinystories-1m"
 ) -> tuple[dict[str, dict[str, torch.Tensor]], list[list[str]] | None]:
-    """Load accumulated activation data and token IDs from Wandb run files.
+    """Load accumulated activation data and token IDs from Wandb artifacts.
     
     Args:
         run_id: The Wandb run ID to load files from
@@ -167,44 +208,48 @@ def load_activation_data_from_wandb(
         except wandb.errors.CommError:
             raise FileNotFoundError(f"Run {run_id} not found in project {project}")
         
-        # Download run files to a temporary directory
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
+        # Load from artifacts
+        try:
+            # Get all logged artifacts from this run
+            artifacts = list(run.logged_artifacts())
+            activation_artifacts = [a for a in artifacts if a.type == "activation_data" and "evaluation_activation_data" in a.name]
             
-            accumulated_data = {}
-            all_token_ids = None
-            
-            # Try to download activation_data directory
-            try:
-                for file in run.files():
-                    if file.name.startswith("activation_data/") and file.name.endswith(".pt"):
-                        local_path = temp_path / file.name
-                        local_path.parent.mkdir(parents=True, exist_ok=True)
-                        file.download(root=temp_dir, replace=True)
-                        
-                        filename = Path(file.name).name
+            if activation_artifacts:
+                # Use the latest activation data artifact (highest version)
+                latest_artifact = max(activation_artifacts, key=lambda x: x.version)
+                artifact_dir = latest_artifact.download()
+                
+                accumulated_data = {}
+                all_token_ids = None
+                
+                activation_data_path = Path(artifact_dir) / "activation_data"
+                if activation_data_path.exists():
+                    # Load activation data files
+                    for file_path in activation_data_path.glob("*.pt"):
+                        filename = file_path.name
                         
                         if filename == "all_token_ids.pt":
                             # Load token IDs
-                            all_token_ids = torch.load(local_path, map_location='cpu')
-                            print(f"Loaded token IDs from Wandb run files")
+                            all_token_ids = torch.load(file_path, map_location='cpu')
+                            print(f"Loaded token IDs from Wandb artifact")
                         else:
                             # Convert filename back to original sae_pos format
                             safe_layer_name = filename[:-3]  # Remove .pt extension
                             sae_pos = safe_layer_name.replace("--", ".")  # Convert back from safe filename
                             
-                            data = torch.load(local_path, map_location='cpu')  # Load to CPU first
+                            data = torch.load(file_path, map_location='cpu')  # Load to CPU first
                             accumulated_data[sae_pos] = data
                             
-                            print(f"Loaded activation data for {sae_pos} from Wandb run files")
-                            
-            except Exception as e:
-                print(f"Warning: Could not load activation data files: {e}")
-            
-            if not accumulated_data:
-                raise FileNotFoundError(f"No activation data files found in run {run_id}")
-            
-            return accumulated_data, all_token_ids
+                            print(f"Loaded activation data for {sae_pos} from Wandb artifact")
+                    
+                    if accumulated_data:
+                        print(f"Loaded activation data from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                        return accumulated_data, all_token_ids
+                    
+        except Exception as e:
+            print(f"Could not load activation data from artifacts: {e}")
+        
+        raise FileNotFoundError(f"No activation data files found in run {run_id}")
             
     except FileNotFoundError:
         # Re-raise these specific exceptions
@@ -217,7 +262,7 @@ def load_metrics_from_wandb(
     run_id: str,
     project: str = "raymondl/tinystories-1m"
 ) -> dict[str, dict[str, Any]] | None:
-    """Load evaluation metrics from Wandb run files.
+    """Load evaluation metrics from Wandb artifacts.
     
     Args:
         run_id: The Wandb run ID to load files from
@@ -237,28 +282,29 @@ def load_metrics_from_wandb(
             print(f"Run {run_id} not found in project {project}")
             return None
         
-        # Download metrics file to a temporary directory
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
+        # Load from artifacts
+        try:
+            # Get all logged artifacts from this run
+            artifacts = list(run.logged_artifacts())
+            metrics_artifacts = [a for a in artifacts if a.type == "metrics" and "evaluation_metrics" in a.name]
             
-            # Try to download metrics.json (root or nested under a folder like 'files/')
-            try:
-                for file in run.files():
-                    if file.name == "metrics.json" or file.name.endswith("/metrics.json"):
-                        local_path = temp_path / file.name
-                        local_path.parent.mkdir(parents=True, exist_ok=True)
-                        file.download(root=temp_dir, replace=True)
-                        
-                        with open(local_path, "r") as f:
-                            metrics = json.load(f)
-                        print(f"Loaded evaluation metrics from Wandb run files")
-                        return metrics
-                        
-            except Exception as e:
-                print(f"Warning: Could not load metrics file: {e}")
-            
-            print(f"No metrics.json file found in run {run_id}")
-            return None
+            if metrics_artifacts:
+                # Use the latest metrics artifact (highest version)
+                latest_artifact = max(metrics_artifacts, key=lambda x: x.version)
+                artifact_dir = latest_artifact.download()
+                
+                metrics_path = Path(artifact_dir) / "metrics.json"
+                if metrics_path.exists():
+                    with open(metrics_path, "r") as f:
+                        metrics = json.load(f)
+                    print(f"Loaded evaluation metrics from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                    return metrics
+                    
+        except Exception as e:
+            print(f"Could not load metrics from artifacts: {e}")
+        
+        print(f"No metrics found in run {run_id}")
+        return None
             
     except Exception as e:
         print(f"Error loading metrics from Wandb: {e}")
@@ -270,21 +316,19 @@ def load_metrics_from_wandb(
 def save_explanations_to_wandb(
     explanations: dict[str, dict[str, Any]]
 ) -> None:
-    """Save explanations directly to the current Wandb run's files directory.
+    """Save explanations as Wandb artifacts to the current run.
     
     Args:
         explanations: Dictionary mapping neuron keys to explanation data
     """
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
-    run_dir = Path(wandb.run.dir)
 
-    # Save explanations at run root
-    explanations_path = run_dir / "explanations.json"
-    with open(explanations_path, "w") as f:
+    # Use temporary files for explanations and summary
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanations_') as f:
         json.dump(explanations, f, indent=2)
-    print(f"Staged explanations at {explanations_path}")
+        temp_explanations_path = f.name
 
-    # Create summary statistics at run root
+    # Create summary statistics
     summary_stats = {
         "num_explanations": len(explanations),
         "explained_neurons_per_layer": {}
@@ -296,25 +340,50 @@ def save_explanations_to_wandb(
                 summary_stats["explained_neurons_per_layer"][layer_name] = 0
             summary_stats["explained_neurons_per_layer"][layer_name] += 1
 
-    summary_path = run_dir / "explanation_summary.json"
-    with open(summary_path, "w") as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanation_summary_') as f:
         json.dump(summary_stats, f, indent=2)
-    print(f"Staged explanation summary at {summary_path}")
+        temp_summary_path = f.name
+
+    print(f"Staged explanations at {temp_explanations_path}")
+    print(f"Staged explanation summary at {temp_summary_path}")
     
-    # Upload files to current run at root (no files/ prefix)
     try:
-        wandb.save(str(explanations_path), base_path=str(run_dir), policy="now")
-        wandb.save(str(summary_path), base_path=str(run_dir), policy="now")
-        print(f"Successfully uploaded explanations to Wandb run files")
+        # Create artifact name with run name and ID for easy identification
+        run_name = wandb.run.name or "unnamed"
+        run_id = wandb.run.id
+        # Clean run name for artifact naming (replace invalid characters)
+        clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+        artifact_name = f"evaluation_explanations_{clean_run_name}_{run_id}"
+        
+        # Create artifact for explanations with alias to override existing
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type="explanations",
+            description=f"Neuron explanations for run {run_name} ({run_id})"
+        )
+        artifact.add_file(temp_explanations_path, name="explanations.json")
+        artifact.add_file(temp_summary_path, name="explanation_summary.json")
+        
+        # Log the artifact with "latest" alias to override previous versions
+        wandb.log_artifact(artifact, aliases=["latest"])
+        print(f"Successfully uploaded explanations as Wandb artifact: {artifact_name}")
+        
     except Exception as e:
-        print(f"Warning: Failed to upload explanations to Wandb: {e}")
+        print(f"Warning: Failed to upload explanations artifact to Wandb: {e}")
+    finally:
+        # Clean up temp files
+        try:
+            os.unlink(temp_explanations_path)
+            os.unlink(temp_summary_path)
+        except:
+            pass
 
 
 def load_explanations_from_wandb(
     run_id: str,
     project: str = "raymondl/tinystories-1m"
 ) -> dict[str, dict[str, Any]] | None:
-    """Load explanations from Wandb run files.
+    """Load explanations from Wandb artifacts.
     
     Args:
         run_id: The Wandb run ID to load files from
@@ -334,28 +403,29 @@ def load_explanations_from_wandb(
             print(f"Run {run_id} not found in project {project}")
             return None
         
-        # Download explanations file to a temporary directory
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
+        # Load from artifacts
+        try:
+            # Get all logged artifacts from this run
+            artifacts = list(run.logged_artifacts())
+            explanations_artifacts = [a for a in artifacts if a.type == "explanations" and "evaluation_explanations" in a.name]
             
-            # Try to download explanations.json (root or nested under a folder like 'files/')
-            try:
-                for file in run.files():
-                    if file.name == "explanations.json" or file.name.endswith("/explanations.json"):
-                        local_path = temp_path / file.name
-                        local_path.parent.mkdir(parents=True, exist_ok=True)
-                        file.download(root=temp_dir, replace=True)
-                        
-                        with open(local_path, "r") as f:
-                            explanations = json.load(f)
-                        print(f"Loaded explanations from Wandb run files")
-                        return explanations
-                        
-            except Exception as e:
-                print(f"Warning: Could not load explanations file: {e}")
-            
-            print(f"No explanations.json file found in run {run_id}")
-            return None
+            if explanations_artifacts:
+                # Use the latest explanations artifact (highest version)
+                latest_artifact = max(explanations_artifacts, key=lambda x: x.version)
+                artifact_dir = latest_artifact.download()
+                
+                explanations_path = Path(artifact_dir) / "explanations.json"
+                if explanations_path.exists():
+                    with open(explanations_path, "r") as f:
+                        explanations = json.load(f)
+                    print(f"Loaded explanations from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                    return explanations
+                    
+        except Exception as e:
+            print(f"Could not load explanations from artifacts: {e}")
+        
+        print(f"No explanations found in run {run_id}")
+        return None
             
     except Exception as e:
         print(f"Error loading explanations from Wandb: {e}")

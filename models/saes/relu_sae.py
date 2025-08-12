@@ -1,7 +1,22 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from models.saes.base import BaseSAE, SAELoss, SAEOutput
+from pydantic import Field, model_validator
+from typing import Any
+from models.saes.base import BaseSAE, SAELoss, SAEOutput, SAEConfig
+from utils.enums import SAEType
+
+
+class ReLUSAEConfig(SAEConfig):
+    sae_type: SAEType = Field(default=SAEType.RELU, description="Type of SAE (automatically set to relu)")
+    
+    @model_validator(mode="before")
+    @classmethod
+    def set_sae_type(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Ensure sae_type is set to relu."""
+        if isinstance(values, dict):
+            values["sae_type"] = SAEType.RELU
+        return values
 
 
 class ReluSAE(BaseSAE):

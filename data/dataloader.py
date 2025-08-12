@@ -8,8 +8,54 @@ from datasets import Dataset, IterableDataset, load_dataset
 from numpy.typing import NDArray
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+from tqdm import tqdm
 
 from data.config import DataConfig
+
+
+def create_eval_dataset_with_progress(dataset: IterableDataset, n_train_samples: int, n_eval_samples: int) -> IterableDataset:
+    """Create evaluation dataset by skipping training samples with progress bar.
+    
+    Args:
+        dataset: The original IterableDataset
+        n_train_samples: Number of training samples to skip
+        n_eval_samples: Number of evaluation samples to take after skipping
+        
+    Returns:
+        IterableDataset containing only evaluation samples
+    """
+    print(f"Creating evaluation dataset by skipping {n_train_samples:,} training samples...")
+    
+    def eval_generator():
+        iterator = iter(dataset)
+        
+        # Skip training samples with progress bar
+        with tqdm(total=n_train_samples, desc="Skipping training samples", unit="samples") as pbar:
+            for _ in range(n_train_samples):
+                try:
+                    next(iterator)
+                    pbar.update(1)
+                except StopIteration:
+                    print("Warning: Reached end of dataset before finishing skip")
+                    return
+        
+        # Take evaluation samples
+        eval_count = 0
+        for sample in iterator:
+            if eval_count >= n_eval_samples:
+                break
+            yield sample
+            eval_count += 1
+    
+    # Import here to avoid circular imports
+    from datasets import IterableDataset as HFIterableDataset
+    
+    # Create new IterableDataset from our generator
+    # We need to preserve the original features
+    return HFIterableDataset.from_generator(
+        eval_generator,
+        features=dataset.features if hasattr(dataset, 'features') else None
+    )
 
 
 class StreamingDataLoader(DataLoader):
@@ -157,8 +203,12 @@ def create_dataloaders(
         train_dataset = dataset.take(data_config.n_train_samples)
         
         if data_config.n_eval_samples is not None:
-            # Skip train samples and take eval samples
-            eval_dataset = dataset.skip(data_config.n_train_samples).take(data_config.n_eval_samples)
+            # Skip train samples and take eval samples with progress bar
+            eval_dataset = create_eval_dataset_with_progress(
+                dataset, 
+                data_config.n_train_samples, 
+                data_config.n_eval_samples
+            )
         else:
             eval_dataset = None
     else:
