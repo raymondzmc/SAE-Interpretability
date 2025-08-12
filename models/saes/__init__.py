@@ -5,6 +5,7 @@ from models.saes.gated_sae import (
     GatedSAE, GatedSAEConfig, GatedSAEOutput,
     GatedHardConcreteSAE, GatedHardConcreteSAEConfig, GatedHardConcreteSAEOutput
 )
+from models.saes.topk_sae import TopKSAE, TopKSAEConfig, TopKSAEOutput
 from utils.enums import SAEType
 from typing import Any
 
@@ -45,13 +46,15 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
         return GatedSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED_HARD_CONCRETE:
         return GatedHardConcreteSAEConfig.model_validate(config_dict)
+    elif sae_type == SAEType.TOPK:
+        return TopKSAEConfig.model_validate(config_dict)
     else:
         raise NotImplementedError(f"SAE type '{sae_type}' is not supported")
 
 
 # Keep track of available SAE types for validation
-AVAILABLE_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE}
-IMPLEMENTED_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE}
+AVAILABLE_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK}
+IMPLEMENTED_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK}
 
 
 __all__ = [
@@ -70,6 +73,9 @@ __all__ = [
     "GatedHardConcreteSAE",
     "GatedHardConcreteSAEConfig",
     "GatedHardConcreteSAEOutput",
+    "TopKSAE",
+    "TopKSAEConfig",
+    "TopKSAEOutput",
     "create_sae_config",
     "AVAILABLE_SAE_TYPES",
     "IMPLEMENTED_SAE_TYPES",

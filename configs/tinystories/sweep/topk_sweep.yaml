@@ -1,0 +1,4 @@
+# ReLU SAE Hyperparameter Sweep Configuration
+
+# Sparsity coefficient sweep  
+k: [4, 8, 16, 32, 64, 128, 256, 512]

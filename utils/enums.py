@@ -7,6 +7,7 @@ class SAEType(str, Enum):
     HARD_CONCRETE = "hard_concrete"
     GATED = "gated"
     GATED_HARD_CONCRETE = "gated_hard_concrete"
+    TOPK = "topk"
     # Add more SAE types as needed
     
 

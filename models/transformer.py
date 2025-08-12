@@ -16,12 +16,15 @@ from models.saes import (
     SAELoss,
     SAEOutput,
     ReluSAE,
+    ReLUSAEConfig,
     HardConcreteSAEConfig,
     HardConcreteSAE,
     GatedSAEConfig,
     GatedSAE,
     GatedHardConcreteSAEConfig,
     GatedHardConcreteSAE,
+    TopKSAEConfig,
+    TopKSAE,
     create_sae_config,
 )
 from utils.enums import SAEType 
@@ -103,7 +106,17 @@ class SAETransformer(torch.nn.Module):
                     initial_beta=sae_config.initial_beta,
                     stretch_limits=sae_config.hard_concrete_stretch_limits,
                 ).to(device)
-            else:
+            elif isinstance(sae_config, TopKSAEConfig):
+                self.saes[self.all_sae_positions[i]] = TopKSAE(
+                    input_size=input_size,
+                    n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
+                    k=sae_config.k,
+                    tied_encoder_init=sae_config.tied_encoder_init,
+                    use_pre_relu=sae_config.use_pre_relu,
+                    aux_k=sae_config.aux_k,
+                    aux_coeff=sae_config.aux_coeff,
+                ).to(device)
+            elif isinstance(sae_config, ReLUSAEConfig):
                 # Use ReLU SAE by default
                 self.saes[self.all_sae_positions[i]] = ReluSAE(
                     input_size=input_size,
@@ -112,6 +125,8 @@ class SAETransformer(torch.nn.Module):
                     mse_coeff=sae_config.mse_coeff,
                     init_decoder_orthogonal=sae_config.init_decoder_orthogonal,
                 ).to(device)
+            else:
+                raise ValueError(f"Unsupported SAE type: {sae_config.sae_type}")
 
     def forward(
         self,

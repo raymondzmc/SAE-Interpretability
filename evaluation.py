@@ -228,6 +228,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:
                         acts = sae_output.mask if hasattr(sae_output, 'mask') else sae_output.c
+                    elif config.saes.sae_type == SAEType.TOPK:
+                        acts = sae_output.code
                     else:
                         acts = sae_output.c  # Default to main activations
                     
@@ -522,10 +524,11 @@ def main():
     
     parser.add_argument("--evaluate_explanations", action="store_true",
                        help="Evaluate explanation quality (default: False)")
-
+    
     parser.add_argument("--force_recompute", action="store_true", default=False,
                        help="Force recomputation of metrics even if existing ones are found (default: False)")
 
+    # For debugging
     parser.add_argument("--override_n_train_samples", type=int, default=None,
                        help="Override n_train_samples to avoid slow data skipping (default: None - use config value)")
     
