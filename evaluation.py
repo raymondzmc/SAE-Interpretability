@@ -8,17 +8,17 @@ import torch
 import wandb
 import argparse
 from settings import settings
-from neuron_explainer.activations.activation_records import calculate_max_activation
-from neuron_explainer.activations.activations import ActivationRecord
-from neuron_explainer.explanations.calibrated_simulator import UncalibratedNeuronSimulator
-from neuron_explainer.explanations.explainer import (  # ContextSize if needed
-    PromptFormat,
-    TokenActivationPairExplainer,
-)
-from neuron_explainer.explanations.explanations import ScoredSimulation
-from neuron_explainer.explanations.few_shot_examples import FewShotExampleSet
-from neuron_explainer.explanations.scoring import simulate_and_score
-from neuron_explainer.explanations.simulator import LogprobFreeExplanationTokenSimulator
+# from neuron_explainer.activations.activation_records import calculate_max_activation
+# from neuron_explainer.activations.activations import ActivationRecord
+# from neuron_explainer.explanations.calibrated_simulator import UncalibratedNeuronSimulator
+# from neuron_explainer.explanations.explainer import (  # ContextSize if needed
+#     PromptFormat,
+#     TokenActivationPairExplainer,
+# )
+# from neuron_explainer.explanations.explanations import ScoredSimulation
+# from neuron_explainer.explanations.few_shot_examples import FewShotExampleSet
+# from neuron_explainer.explanations.scoring import simulate_and_score
+# from neuron_explainer.explanations.simulator import LogprobFreeExplanationTokenSimulator
 from torch.nn.functional import mse_loss
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -37,43 +37,46 @@ from utils.io import (
 from utils.enums import SAEType
 from utils.metrics import explained_variance
 from utils.plotting import create_pareto_plots
+from auto_interp.explainers.sampler import stratified_sample_by_max_activation
+from auto_interp.explainers.features import FeatureRecord, Feature, Example
+from auto_interp.explainers.explainer import DefaultExplainer, ExplainerResult
+from auto_interp.clients import OpenAIClient
 
+# async def _run_simulation_and_scoring(
+#     explanation_text: str,
+#     records_for_simulation: Sequence[ActivationRecord],
+#     model_name_for_simulator: str,
+#     few_shot_example_set: FewShotExampleSet,
+#     prompt_format: PromptFormat,
+#     num_retries: int = 5,
+# ) -> tuple[float | None, Any | None]:
+#     """Helper to run simulation and scoring with retries."""
+#     attempts = 0
+#     score = None
+#     scored_simulation = None
+#     while attempts < num_retries:  # Retry loop
+#         try:
+#             simulator = UncalibratedNeuronSimulator(
+#                 LogprobFreeExplanationTokenSimulator(
+#                     model_name_for_simulator,
+#                     explanation_text,
+#                     json_mode=True,
+#                     max_concurrent=10,
+#                     few_shot_example_set=few_shot_example_set,
+#                     prompt_format=prompt_format,
+#                 )
+#             )
+#             scored_simulation: ScoredSimulation = await simulate_and_score(simulator, records_for_simulation)
+#             score = scored_simulation.get_preferred_score() if scored_simulation else None
 
-async def _run_simulation_and_scoring(
-    explanation_text: str,
-    records_for_simulation: Sequence[ActivationRecord],
-    model_name_for_simulator: str,
-    few_shot_example_set: FewShotExampleSet,
-    prompt_format: PromptFormat,
-    num_retries: int = 5,
-) -> tuple[float | None, Any | None]:
-    """Helper to run simulation and scoring with retries."""
-    attempts = 0
-    score = None
-    scored_simulation = None
-    while attempts < num_retries:  # Retry loop
-        try:
-            simulator = UncalibratedNeuronSimulator(
-                LogprobFreeExplanationTokenSimulator(
-                    model_name_for_simulator,
-                    explanation_text,
-                    json_mode=True,
-                    max_concurrent=10,
-                    few_shot_example_set=few_shot_example_set,
-                    prompt_format=prompt_format,
-                )
-            )
-            scored_simulation: ScoredSimulation = await simulate_and_score(simulator, records_for_simulation)
-            score = scored_simulation.get_preferred_score() if scored_simulation else None
+#         except Exception as e:
+#             print(f"Error in attempt {attempts + 1}: {e}")
+#             attempts += 1
 
-        except Exception as e:
-            print(f"Error in attempt {attempts + 1}: {e}")
-            attempts += 1
+#         if score is not None and not np.isnan(score):
+#             break
 
-        if score is not None and not np.isnan(score):
-            break
-
-    return score, scored_simulation
+#     return score, scored_simulation
 
 
 def run_evaluation(args: argparse.Namespace) -> None:
@@ -82,10 +85,10 @@ def run_evaluation(args: argparse.Namespace) -> None:
     """
     
     # OpenAI model mappings
-    OPENAI_MODELS = {
-        "gpt-4o-mini": "gpt-4o-mini-07-18",
-        "gpt-4o": "gpt-4o-2024-11-20",
-    }
+    # OPENAI_MODELS = {
+    #     "gpt-4o-mini": "gpt-4o-mini-07-18",
+    #     "gpt-4o": "gpt-4o-2024-11-20",
+    # }
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     wandb.login(key=settings.wandb_api_key)
@@ -167,9 +170,9 @@ def run_evaluation(args: argparse.Namespace) -> None:
             accumulated_data = {}
             for sae_pos in model.raw_sae_positions:
                 accumulated_data[sae_pos] = {
-                    'nonzero_activations': torch.empty(0, args.window_size, dtype=torch.float16),
-                    'data_indices': torch.empty(0, dtype=torch.long),
-                    'neuron_indices': torch.empty(0, dtype=torch.long),
+                    'nonzero_activations': [],
+                    'data_indices': [],
+                    'neuron_indices': [],
                 }
                 metrics[sae_pos] = {
                     'alive_dict_components': set(),
@@ -263,25 +266,20 @@ def run_evaluation(args: argparse.Namespace) -> None:
                             global_data_indices = data_indices + len(all_token_ids)
 
                             # Accumulate tensors for this SAE position
-                            accumulated_data[sae_pos]['nonzero_activations'] = torch.cat([
-                                accumulated_data[sae_pos]['nonzero_activations'], 
-                                nonzero_activations.cpu()
-                            ], dim=0)
-                            accumulated_data[sae_pos]['data_indices'] = torch.cat([
-                                accumulated_data[sae_pos]['data_indices'], 
-                                global_data_indices.cpu()
-                            ], dim=0)
-                            accumulated_data[sae_pos]['neuron_indices'] = torch.cat([
-                                accumulated_data[sae_pos]['neuron_indices'], 
-                                neuron_indices.cpu()
-                            ], dim=0)
+                            accumulated_data[sae_pos]['nonzero_activations'].append(nonzero_activations.to(torch.float16).cpu())
+                            accumulated_data[sae_pos]['data_indices'].append(global_data_indices.cpu())
+                            accumulated_data[sae_pos]['neuron_indices'].append(neuron_indices.cpu())
 
                 # Store tokenized sequences for explanation generation
                 chunked_tokens = [tokenizer.convert_ids_to_tokens(token_ids_chunked[i]) for i in range(chunked_batch_size)]
                 all_token_ids.extend(chunked_tokens)
 
-            # Average metrics over all batches and convert alive components from set to count
             for sae_pos in model.raw_sae_positions:
+                if args.save_activation_data:
+                    accumulated_data[sae_pos]['nonzero_activations'] = torch.cat(accumulated_data[sae_pos]['nonzero_activations'], dim=0)
+                    accumulated_data[sae_pos]['data_indices'] = torch.cat(accumulated_data[sae_pos]['data_indices'], dim=0)
+                    accumulated_data[sae_pos]['neuron_indices'] = torch.cat(accumulated_data[sae_pos]['neuron_indices'], dim=0)
+
                 metrics[sae_pos]['sparsity_l0'] /= total_tokens
                 metrics[sae_pos]['mse'] /= total_tokens
                 metrics[sae_pos]['explained_variance'] /= total_tokens
@@ -325,23 +323,22 @@ def run_evaluation(args: argparse.Namespace) -> None:
         all_run_metrics.append(run_metrics)
         
         if args.generate_explanations:
-            # Initialize TokenActivationPairExplainer
-            explainer = TokenActivationPairExplainer(
-                model_name=OPENAI_MODELS.get(args.explanation_model, args.explanation_model), 
-                prompt_format=PromptFormat.HARMONY_V4
+            explainer = DefaultExplainer(
+                client=OpenAIClient(settings.openai_api_key),
+                tokenizer=tokenizer,
+                verbose=True,
+                activations=True,
+                cot=True,
+                threshold=0.6,
             )
-            
             # Filter neurons with sufficient examples and construct activation records
-            explanations_for_run = {}
+            # explanations_for_run = {}
 
             for sae_pos in model.raw_sae_positions:
                 data = accumulated_data[sae_pos]
                 
                 # Count occurrences of each neuron and calculate total activation
                 unique_neurons, counts = torch.unique(data['neuron_indices'], return_counts=True)
-                
-                # Calculate total activation/probability for each unique neuron
-                # Note: For Bayesian SAEs, this sums probabilities; for ReLU SAEs, this sums activations
                 neuron_total_activations = []
                 for neuron_idx in unique_neurons:
                     neuron_mask = data['neuron_indices'] == neuron_idx
@@ -357,130 +354,153 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 top_neurons = unique_neurons[top_neuron_indices]
                 top_counts = counts[top_neuron_indices]
                 
-                # Take top neurons for explanation (we'll use top examples regardless of count)
+            #     # Take top neurons for explanation (we'll use top examples regardless of count)
                 neurons_to_explain = top_neurons
                 
                 print(f"SAE position {sae_pos}: {len(unique_neurons)} total neurons, taking top {args.num_neurons}")
                 print(f"  Processing {len(neurons_to_explain)} neurons for explanation...")
                 
-                # Process each neuron for explanation
+            #     # Process each neuron for explanation
                 for neuron_idx in neurons_to_explain:
                     neuron_idx_item = neuron_idx.item()
-                    
+                    feature_record = FeatureRecord(
+                        feature=Feature(
+                            module_name=f"{sae_pos}_neuron_{neuron_idx_item}",
+                            feature_index=neuron_idx_item
+                        )
+                    )
+
                     # Get all data for this specific neuron
                     neuron_mask = data['neuron_indices'] == neuron_idx
-                    neuron_data_indices = data['data_indices'][neuron_mask]
+                    neuron_data_indices = data['data_indices'][neuron_mask] # (n_examples)
                     neuron_activations = data['nonzero_activations'][neuron_mask]  # (n_examples, seq_len)
-                    
-                    # Get top 10 activation records with highest activation values
-                    max_activations_per_example = neuron_activations.float().max(dim=1).values  # Max across sequence
-                    
-                    # Get indices sorted by activation value (descending)
-                    sorted_indices = torch.argsort(max_activations_per_example, descending=True)
-                    
-                    # Take top num_features_to_explain examples (or fewer if not enough examples)
-                    top_k = min(args.num_features_to_explain, len(sorted_indices))
-                    top_indices = sorted_indices[:top_k]
-                    
-                    # Convert to activation records for top examples only
-                    activation_records = []
-                    for idx in top_indices:
-                        i = idx.item()
-                        data_idx = neuron_data_indices[i].item()
-                        activations = neuron_activations[i].float().tolist()  # Convert to list of floats
-                        max_activation_value = max_activations_per_example[i].item()
-                        
-                        # Get the corresponding tokens
-                        if data_idx < len(all_token_ids):
-                            tokens = [token.replace("Ġ", "") for token in all_token_ids[data_idx]]
-                            
-                            # Create activation record
-                            activation_record = ActivationRecord(
-                                tokens=tokens,
-                                activations=activations
-                            )
-                            activation_records.append(activation_record)
-                    
-                    if not activation_records:
-                        print(f"  Skipping neuron {neuron_idx_item} - no valid activation records")
-                        continue
-                        
-                    print(f"  Processing neuron {neuron_idx_item} with {len(activation_records)} examples...")
-                    
-                    # Calculate max activation for this neuron
-                    max_activation = calculate_max_activation(activation_records)
-                    if max_activation == 0:
-                        print(f"  Skipping neuron {neuron_idx_item} - max activation is zero")
+
+                    # Use stratified sampling to get diverse examples from different activation quantiles
+                    # This ensures we capture both high and low activation patterns
+                    if neuron_activations.nonzero().numel() < args.min_activated_features_per_neuron:
+                        print(f"  Skipping neuron {neuron_idx_item} - not enough examples")
                         continue
                     
-                    try:
-                        # Generate explanation for this neuron
-                        generated_explanations = asyncio.run(explainer.generate_explanations(
-                            all_activation_records=activation_records,
-                            max_activation=max_activation,
-                            num_samples=1,
-                            max_tokens=100,
-                            temperature=0.0
-                        ))
-                        if generated_explanations:
-                            explanation = generated_explanations[0].strip()
-                            print(f"    Neuron {neuron_idx_item}: {explanation}")
+                    if len(neuron_data_indices) < args.num_features_to_explain:
+                        # If there are less than num_features_to_explain examples, use all of them
+                        sampled_indices = neuron_data_indices
+                    else:
+                        sampled_indices = stratified_sample_by_max_activation(
+                            neuron_activations=neuron_activations.float(),
+                            n_samples=args.num_features_to_explain,
+                            n_quantiles=args.stratified_quantiles,
+                            seed=42,
+                        )
+                    feature_record.examples = [
+                        Example(
+                            tokens=[token.replace("Ġ", "") for token in all_token_ids[neuron_data_indices[idx].item()]],
+                            activations=neuron_activations[idx].float().tolist(),
+                            normalized_activations=(neuron_activations[idx].float() * 10 / neuron_activations[idx].float().max()).floor(),
+                        )
+                        for idx in sampled_indices
+                    ]
+                    explanation: ExplainerResult = explainer(feature_record)
+                    print(explanation.explanation)
+                    
+            #         # Convert to activation records for top examples only
+            #         activation_records = []
+            #         for idx in sampled_indices:
+            #             i = idx.item()
+            #             data_idx = neuron_data_indices[i].item()
+            #             activations = neuron_activations[i].float().tolist()  # Convert to list of floats
+            #             # max_activation_value = neuron_activations[i].float().max().item() # Use max across sequence for this example
+                        
+            #             # Get the corresponding tokens
+            #             if data_idx < len(all_token_ids):
+            #                 tokens = [token.replace("Ġ", "") for token in all_token_ids[data_idx]]
                             
-                            explanation_score = None
-                            if args.evaluate_explanations:
-                                # Prepare records for scoring (clean up tokens)
-                                temp_activation_records = [
-                                    ActivationRecord(
-                                        tokens=[
-                                            token.replace("<|endoftext|>", "<|not_endoftext|>")
-                                            .replace(" 55", "_55")
-                                            .replace("Ġ", "")
-                                            .encode("ascii", errors="backslashreplace")
-                                            .decode("ascii")
-                                            for token in record.tokens
-                                        ],
-                                        activations=record.activations,
-                                    )
-                                    for record in activation_records
-                                ]
+            #                 # Create activation record
+            #                 activation_record = ActivationRecord(
+            #                     tokens=tokens,
+            #                     activations=activations
+            #                 )
+            #                 activation_records.append(activation_record)
+                    
+            #         if not activation_records:
+            #             print(f"  Skipping neuron {neuron_idx_item} - no valid activation records")
+            #             continue
+                        
+            #         print(f"  Processing neuron {neuron_idx_item} with {len(activation_records)} examples...")
+                    
+            #         # Calculate max activation for this neuron
+            #         max_activation = calculate_max_activation(activation_records)
+            #         if max_activation == 0:
+            #             print(f"  Skipping neuron {neuron_idx_item} - max activation is zero")
+            #             continue
+                    
+            #         try:
+            #             # Generate explanation for this neuron
+            #             generated_explanations = asyncio.run(explainer.generate_explanations(
+            #                 all_activation_records=activation_records,
+            #                 max_activation=max_activation,
+            #                 num_samples=1,
+            #                 max_tokens=100,
+            #                 temperature=0.0
+            #             ))
+            #             if generated_explanations:
+            #                 explanation = generated_explanations[0].strip()
+            #                 print(f"    Neuron {neuron_idx_item}: {explanation}")
+                            
+            #                 explanation_score = None
+            #                 if args.evaluate_explanations:
+            #                     # Prepare records for scoring (clean up tokens)
+            #                     temp_activation_records = [
+            #                         ActivationRecord(
+            #                             tokens=[
+            #                                 token.replace("<|endoftext|>", "<|not_endoftext|>")
+            #                                 .replace(" 55", "_55")
+            #                                 .replace("Ġ", "")
+            #                                 .encode("ascii", errors="backslashreplace")
+            #                                 .decode("ascii")
+            #                                 for token in record.tokens
+            #                             ],
+            #                             activations=record.activations,
+            #                         )
+            #                         for record in activation_records
+            #                     ]
                                 
-                                # Score the explanation
-                                explanation_score, scored_simulation_details = asyncio.run(
-                                    _run_simulation_and_scoring(
-                                        explanation_text=explanation,
-                                        records_for_simulation=temp_activation_records,
-                                        model_name_for_simulator=OPENAI_MODELS.get(args.simulator_model, args.simulator_model),
-                                        few_shot_example_set=FewShotExampleSet.JL_FINE_TUNED,
-                                        prompt_format=PromptFormat.HARMONY_V4
-                                    )
-                                )
-                                print(f"    Neuron {neuron_idx_item} - Score: {explanation_score}")
+            #                     # Score the explanation
+            #                     explanation_score, scored_simulation_details = asyncio.run(
+            #                         _run_simulation_and_scoring(
+            #                             explanation_text=explanation,
+            #                             records_for_simulation=temp_activation_records,
+            #                             model_name_for_simulator=OPENAI_MODELS.get(args.simulator_model, args.simulator_model),
+            #                             few_shot_example_set=FewShotExampleSet.JL_FINE_TUNED,
+            #                             prompt_format=PromptFormat.HARMONY_V4
+            #                         )
+            #                     )
+            #                     print(f"    Neuron {neuron_idx_item} - Score: {explanation_score}")
                             
-                            # Store the explanation and score
-                            key = f"{sae_pos}_neuron_{neuron_idx_item}"
-                            explanations_for_run[key] = {
-                                "text": explanation,
-                                "score": explanation_score,
-                                "sae_position": sae_pos,
-                                "neuron_index": neuron_idx_item,
-                                "num_examples": len(activation_records)
-                            }
+            #                 # Store the explanation and score
+            #                 key = f"{sae_pos}_neuron_{neuron_idx_item}"
+            #                 explanations_for_run[key] = {
+            #                     "text": explanation,
+            #                     "score": explanation_score,
+            #                     "sae_position": sae_pos,
+            #                     "neuron_index": neuron_idx_item,
+            #                     "num_examples": len(activation_records)
+            #                 }
                             
-                        else:
-                            print(f"    No explanation generated for neuron {neuron_idx_item}")
+            #             else:
+            #                 print(f"    No explanation generated for neuron {neuron_idx_item}")
                             
-                    except Exception as e:
-                        print(f"    Error processing neuron {neuron_idx_item}: {e}")
+            #         except Exception as e:
+            #             print(f"    Error processing neuron {neuron_idx_item}: {e}")
             
-            # Save explanations to Wandb
-            if explanations_for_run:
-                try:
-                    print(f"Saving explanations to Wandb for run {run_id}")
-                    save_explanations_to_wandb(explanations=explanations_for_run)
-                    print(f"Successfully uploaded explanations to Wandb for run {run_id}")
+            # # Save explanations to Wandb
+            # if explanations_for_run:
+            #     try:
+            #         print(f"Saving explanations to Wandb for run {run_id}")
+            #         save_explanations_to_wandb(explanations=explanations_for_run)
+            #         print(f"Successfully uploaded explanations to Wandb for run {run_id}")
                     
-                except Exception as e:
-                    print(f"Warning: Failed to upload explanations to Wandb: {e}")
+            #     except Exception as e:
+            #         print(f"Warning: Failed to upload explanations to Wandb: {e}")
         
         # Finish the current wandb run before moving to the next one
         wandb.finish()
@@ -499,12 +519,15 @@ def main():
                        help="Size of token windows for processing (default: 64)")
     parser.add_argument("--num_neurons", type=int, default=300,
                        help="Number of top neurons to process per layer (default: 300)")
-    parser.add_argument("--min_activated_features", type=int, default=200,
-                       help="Minimum number of activated features to use for explanation (default: 200)")
+    parser.add_argument("--min_activated_features_per_neuron", type=int, default=100,
+                       help="Minimum number of activated features to use for explanation per neuron (default: 100)")
+
     parser.add_argument("--num_features_to_explain", type=int, default=10,
                        help="Number of top activation examples to use for explanation (default: 10)")
     parser.add_argument("--n_eval_samples", type=int, default=50000,
                        help="Number of evaluation samples to process (default: 50000)")
+    parser.add_argument("--stratified_quantiles", type=int, default=4,
+                       help="Number of quantiles for stratified sampling of activation examples (default: 4)")
     
     # Model parameters
     parser.add_argument("--explanation_model", type=str, default="gpt-4o",

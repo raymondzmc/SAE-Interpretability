@@ -13,7 +13,9 @@ class HardConcreteSAEConfig(SAEConfig):
     final_beta: float | None = Field(None, description="Final beta for Hard Concrete annealing")
     beta_annealing: bool = Field(False, description="Whether to anneal beta during training")
     hard_concrete_stretch_limits: tuple[float, float] = Field((-0.1, 1.1), description="Hard concrete stretch limits")
-    input_dependent_gates: bool = Field(True, description="Whether to use input-dependent gates")
+    tied_encoder_init: bool = Field(True, description="Whether to tie the encoder weights to the decoder weights")
+    apply_relu_to_magnitude: bool = Field(True, description="Whether to apply ReLU to the magnitude")
+    coefficient_threshold: float | None = Field(None, description="Threshold for the coefficients during inference")
     
     @model_validator(mode="before")
     @classmethod
@@ -30,6 +32,8 @@ class HardConcreteSAEOutput(SAEOutput):
     beta: float
     l: float
     r: float
+    magnitude: torch.Tensor
+    gate_logits: torch.Tensor
 
 
 def hard_concrete(
@@ -99,8 +103,9 @@ class HardConcreteSAE(BaseSAE):
         mse_coeff: float | None = None,
         stretch_limits: tuple[float, float] = (-0.1, 1.1), # Stretch limits for Hard Concrete
         init_decoder_orthogonal: bool = True,
-        input_dependent_gates: bool = True, # If True, use input-dependent gates; if False, use nn.Parameter gates
-        inference_threshold: float | None = None,
+        tied_encoder_init: bool = True,
+        apply_relu_to_magnitude: bool = True,
+        coefficient_threshold: float | None = None,
     ):
         """Initialize the SAE with Hard Concrete gates.
 
@@ -110,28 +115,25 @@ class HardConcreteSAE(BaseSAE):
             initial_beta: Initial temperature for the Hard Concrete distribution. This will be annealed during training.
             stretch_limits: Stretch limits (l, r) for Hard Concrete. Must have l < 0 and r > 1.
             init_decoder_orthogonal: Initialize the decoder weights to be orthonormal
-            input_dependent_gates: If True, use input-dependent gates computed by encoder.
-                                 If False, use nn.Parameter gates independent of input.
+            tied_encoder_init: Tie the encoder weights to the decoder weights
+            apply_relu_to_magnitude: Apply ReLU to the magnitude
+            coefficient_threshold: Threshold for the coefficients during inference
         """
         super().__init__()
-        
-        self.input_dependent_gates = input_dependent_gates
-        
-        if input_dependent_gates:
-            # Input-dependent gates: encoder outputs both logits and pre-magnitude
-            self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
-        else:
-            # Parameter-based gates: encoder only outputs magnitude, gates are nn.Parameter
-            self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
-            self.gate_logits = torch.nn.Parameter(torch.randn(n_dict_components))
-            
-        self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
-
         self.n_dict_components = n_dict_components
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
-        self.inference_threshold = 1e-6
+        self.apply_relu_to_magnitude = apply_relu_to_magnitude
+        self.coefficient_threshold = coefficient_threshold
+
+        self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        self.gate_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
+        self.magnitude_scale = torch.nn.Parameter(torch.ones(n_dict_components))
+        self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
+
+        self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
+        self.decoder_bias = torch.nn.Parameter(torch.zeros(input_size))
 
         # Register beta as a buffer to allow updates during training without being a model parameter
         # Create on CPU first, will be moved to correct device by .to() call
@@ -141,6 +143,9 @@ class HardConcreteSAE(BaseSAE):
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
+
+        if tied_encoder_init:
+            self.encoder.weight.data.copy_(self.decoder.weight.data.T)
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
         """
@@ -171,39 +176,32 @@ class HardConcreteSAE(BaseSAE):
         if x.device != module_device:
             x = x.to(module_device)
         
+        x_centered = x - self.decoder_bias
+
         # Get encoder output
-        encoder_out = self.encoder(x)
-        
-        if self.input_dependent_gates:
-            # Input-dependent gates: split encoder output into logits and pre-magnitude
-            logits, magnitude = torch.chunk(encoder_out, 2, dim=-1)
-        else:
-            # Parameter-based gates: encoder only outputs pre-magnitude
-            magnitude = encoder_out
-            target_shape = magnitude.shape
-            logits = self.gate_logits.view(1, 1, -1).expand(target_shape)
+        encoder_out = self.encoder(x_centered)
 
-        # Sample gates z from Hard Concrete distribution using logits and current beta
+        gate_logits = encoder_out + self.gate_bias
         current_beta = self.beta.item() # Get current beta value from buffer
-        z = hard_concrete(logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
+        z = hard_concrete(gate_logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
 
-        # Calculate magnitude using ReLU on pre-magnitude (removed since magnitudes can be negative)
-        # magnitude_c = F.relu(pre_magnitude) # Shape: (batch_size, n_dict_components)
+        magnitude = self.magnitude_scale.exp() * encoder_out + self.magnitude_bias
+        if self.apply_relu_to_magnitude:
+            magnitude = F.relu(magnitude)
     
         # Combine gate and magnitude for final coefficients
-        c = z * magnitude
+        coefficients = z * magnitude
         
         # Apply threshold during evaluation for cleaner reconstruction and consistent sparsity
-        if not self.training and self.inference_threshold is not None:
-            c = torch.where(torch.abs(c) >= self.inference_threshold, c, 0.0)
+        if not self.training and self.coefficient_threshold is not None:
+            coefficients = torch.where(torch.abs(coefficients) >= self.coefficient_threshold, coefficients, 0.0)
 
         # Reconstruct using the dictionary elements and final coefficients
-        x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
+        x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder.bias)
 
-        # Return logits and HC params for L0 loss calculation
-        return HardConcreteSAEOutput(input=x, c=c, output=x_hat, logits=logits, beta=current_beta, l=self.l, r=self.r, z=z)
-    
-    def calc_l0_loss(self, logits: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
+        return HardConcreteSAEOutput(input=x, c=coefficients, output=x_hat, logits=None, magnitude=magnitude, beta=current_beta, l=self.l, r=self.r, z=z, gate_logits=gate_logits)
+
+    def calc_l0_loss(self, gate_logits: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
         safe_l = self.l if abs(self.l) > epsilon else -epsilon
         safe_r = self.r if abs(self.r) > epsilon else epsilon
 
@@ -212,10 +210,10 @@ class HardConcreteSAE(BaseSAE):
         if log_arg <= 0:
             print(f"Warning: Invalid term for log in L0 penalty: -l/r = {log_arg:.4f}. Returning 0 penalty.")
             # Return a tensor with the correct device and dtype
-            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+            return torch.tensor(0.0, device=gate_logits.device, dtype=gate_logits.dtype)
 
         log_ratio = math.log(log_arg)
-        penalty_per_element = torch.sigmoid(logits - self.beta * log_ratio)
+        penalty_per_element = torch.sigmoid(gate_logits - self.beta * log_ratio)
         return penalty_per_element.sum(dim=-1).mean() / self.input_size
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
@@ -224,7 +222,7 @@ class HardConcreteSAE(BaseSAE):
         Args:
             output: The output of the HardConcreteSAE.
         """
-        sparsity_loss = self.calc_l0_loss(logits=output.logits)
+        sparsity_loss = self.calc_l0_loss(gate_logits=output.gate_logits)
         mse_loss = F.mse_loss(output.output, output.input)
         loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         return SAELoss(
