@@ -53,14 +53,11 @@ class SAETransformer(torch.nn.Module):
         super().__init__()
         # Ensure the model is moved to the correct device before using it
         self.tlens_model = tlens_model.eval()
+        self.sae_config = sae_config
+        self.device = device
         if device is not None:
             self.tlens_model = self.tlens_model.to(device)
-            # Force garbage collection and clear CUDA cache to free memory from previous device
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        
+
         self.raw_sae_positions = sae_config.sae_positions
         self.hook_shapes: dict[str, list[int]] = get_hook_shapes(
             self.tlens_model, self.raw_sae_positions
@@ -68,11 +65,12 @@ class SAETransformer(torch.nn.Module):
         # ModuleDict keys can't have periods in them, so we replace them with hyphens
         self.all_sae_positions = [name.replace(".", "-") for name in self.raw_sae_positions]
         self.saes = torch.nn.ModuleDict()
-        
-        self._create_sae_modules(sae_config, device)
+        self.__create_sae_modules()
     
-    def _create_sae_modules(self, sae_config: SAEConfig, device: torch.device | None = None):
+    def __create_sae_modules(self):
         """Create SAE modules with proper device context."""
+        sae_config = self.sae_config
+        device = self.device or self.tlens_model.cfg.device
         for i in range(len(self.all_sae_positions)):
             input_size = self.hook_shapes[self.raw_sae_positions[i]][-1]
 
@@ -86,7 +84,9 @@ class SAETransformer(torch.nn.Module):
                     stretch_limits=sae_config.hard_concrete_stretch_limits,
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
-                    input_dependent_gates=sae_config.input_dependent_gates,
+                    tied_encoder_init=sae_config.tied_encoder_init,
+                    apply_relu_to_magnitude=sae_config.apply_relu_to_magnitude,
+                    coefficient_threshold=sae_config.coefficient_threshold,
                 ).to(device)
             elif isinstance(sae_config, GatedSAEConfig):
                 self.saes[self.all_sae_positions[i]] = GatedSAE(

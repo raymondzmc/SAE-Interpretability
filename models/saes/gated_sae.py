@@ -63,12 +63,8 @@ class GatedSAE(BaseSAE):
         """
         Default method for initializing GatedSAE weights.
         """
-        # biases are initialized to zero
-        nn.init.zeros_(self.decoder_bias)
-        nn.init.zeros_(self.r_mag)
-        nn.init.zeros_(self.gate_bias)
-        nn.init.zeros_(self.mag_bias)
-
+        # biases are already initialized to zero in __init__, no need to re-zero them
+        
         # decoder weights are initialized to random unit vectors
         dec_weight = torch.randn_like(self.decoder.weight)
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
@@ -267,12 +263,8 @@ class GatedHardConcreteSAE(BaseSAE):
         """
         Default method for initializing GatedHardConcreteSAE weights.
         """
-        # biases are initialized to zero
-        nn.init.zeros_(self.decoder_bias)
-        nn.init.zeros_(self.r_mag)
-        nn.init.zeros_(self.gate_bias)
-        nn.init.zeros_(self.mag_bias)
-
+        # biases are already initialized to zero in __init__, no need to re-zero them
+        
         # decoder weights are initialized to random unit vectors
         dec_weight = torch.randn_like(self.decoder.weight)
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)

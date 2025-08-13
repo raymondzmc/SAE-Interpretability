@@ -167,7 +167,6 @@ def save_metrics_to_wandb(
         # Log the artifact with "latest" alias to override previous versions
         wandb.log_artifact(artifact, aliases=["latest"])
         print(f"Successfully uploaded metrics as Wandb artifact: {artifact_name}")
-        
     except Exception as e:
         print(f"Warning: Failed to upload metrics artifact to Wandb: {e}")
     finally:
@@ -214,43 +213,43 @@ def load_activation_data_from_wandb(
             artifacts = list(run.logged_artifacts())
             activation_artifacts = [a for a in artifacts if a.type == "activation_data" and "evaluation_activation_data" in a.name]
             
-            if activation_artifacts:
-                # Use the latest activation data artifact (highest version)
-                latest_artifact = max(activation_artifacts, key=lambda x: x.version)
-                artifact_dir = latest_artifact.download()
-                
-                accumulated_data = {}
-                all_token_ids = None
-                
-                activation_data_path = Path(artifact_dir) / "activation_data"
-                if activation_data_path.exists():
-                    # Load activation data files
-                    for file_path in activation_data_path.glob("*.pt"):
-                        filename = file_path.name
-                        
-                        if filename == "all_token_ids.pt":
-                            # Load token IDs
-                            all_token_ids = torch.load(file_path, map_location='cpu')
-                            print(f"Loaded token IDs from Wandb artifact")
-                        else:
-                            # Convert filename back to original sae_pos format
-                            safe_layer_name = filename[:-3]  # Remove .pt extension
-                            sae_pos = safe_layer_name.replace("--", ".")  # Convert back from safe filename
-                            
-                            data = torch.load(file_path, map_location='cpu')  # Load to CPU first
-                            accumulated_data[sae_pos] = data
-                            
-                            print(f"Loaded activation data for {sae_pos} from Wandb artifact")
-                    
-                    if accumulated_data:
-                        print(f"Loaded activation data from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
-                        return accumulated_data, all_token_ids
-                    
+            if not activation_artifacts:
+                raise FileNotFoundError(f"No activation data files found in run {run_id}")
+            
+            # Use the latest activation data artifact (highest version)
+            latest_artifact = max(activation_artifacts, key=lambda x: x.version)
+            artifact_dir = latest_artifact.download()
+            
+            activation_data_path = Path(artifact_dir) / "activation_data"
+            if not activation_data_path.exists():
+                raise FileNotFoundError(f"Activation data directory missing in artifact for run {run_id}")
+            
+            accumulated_data: dict[str, dict[str, torch.Tensor]] = {}
+            all_token_ids: list[list[str]] | None = None
+            
+            # Load activation data files
+            for file_path in activation_data_path.glob("*.pt"):
+                filename = file_path.name
+                if filename == "all_token_ids.pt":
+                    # Load token IDs
+                    all_token_ids = torch.load(file_path, map_location='cpu')
+                    print(f"Loaded token IDs from Wandb artifact")
+                else:
+                    # Convert filename back to original sae_pos format
+                    safe_layer_name = filename[:-3]  # Remove .pt extension
+                    sae_pos = safe_layer_name.replace("--", ".")  # Convert back from safe filename
+                    data = torch.load(file_path, map_location='cpu')  # Load to CPU first
+                    accumulated_data[sae_pos] = data
+                    print(f"Loaded activation data for {sae_pos} from Wandb artifact")
+            
+            if not accumulated_data:
+                raise FileNotFoundError(f"No activation data tensors found in artifact for run {run_id}")
+            
+            print(f"Loaded activation data from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+            return accumulated_data, all_token_ids
         except Exception as e:
             print(f"Could not load activation data from artifacts: {e}")
-        
-        raise FileNotFoundError(f"No activation data files found in run {run_id}")
-            
+            raise FileNotFoundError(f"No activation data files found in run {run_id}")
     except FileNotFoundError:
         # Re-raise these specific exceptions
         raise
@@ -288,24 +287,26 @@ def load_metrics_from_wandb(
             artifacts = list(run.logged_artifacts())
             metrics_artifacts = [a for a in artifacts if a.type == "metrics" and "evaluation_metrics" in a.name]
             
-            if metrics_artifacts:
-                # Use the latest metrics artifact (highest version)
-                latest_artifact = max(metrics_artifacts, key=lambda x: x.version)
-                artifact_dir = latest_artifact.download()
-                
-                metrics_path = Path(artifact_dir) / "metrics.json"
-                if metrics_path.exists():
-                    with open(metrics_path, "r") as f:
-                        metrics = json.load(f)
-                    print(f"Loaded evaluation metrics from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
-                    return metrics
-                    
+            if not metrics_artifacts:
+                print(f"No metrics found in run {run_id}")
+                return None
+            
+            # Use the latest metrics artifact (highest version)
+            latest_artifact = max(metrics_artifacts, key=lambda x: x.version)
+            artifact_dir = latest_artifact.download()
+            
+            metrics_path = Path(artifact_dir) / "metrics.json"
+            if metrics_path.exists():
+                with open(metrics_path, "r") as f:
+                    metrics = json.load(f)
+                print(f"Loaded evaluation metrics from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                return metrics
         except Exception as e:
             print(f"Could not load metrics from artifacts: {e}")
+            return None
         
         print(f"No metrics found in run {run_id}")
         return None
-            
     except Exception as e:
         print(f"Error loading metrics from Wandb: {e}")
         return None
@@ -322,12 +323,12 @@ def save_explanations_to_wandb(
         explanations: Dictionary mapping neuron keys to explanation data
     """
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
-
+        
     # Use temporary files for explanations and summary
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanations_') as f:
         json.dump(explanations, f, indent=2)
         temp_explanations_path = f.name
-
+    
     # Create summary statistics
     summary_stats = {
         "num_explanations": len(explanations),
@@ -339,7 +340,7 @@ def save_explanations_to_wandb(
             if layer_name not in summary_stats["explained_neurons_per_layer"]:
                 summary_stats["explained_neurons_per_layer"][layer_name] = 0
             summary_stats["explained_neurons_per_layer"][layer_name] += 1
-
+    
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanation_summary_') as f:
         json.dump(summary_stats, f, indent=2)
         temp_summary_path = f.name
@@ -367,7 +368,6 @@ def save_explanations_to_wandb(
         # Log the artifact with "latest" alias to override previous versions
         wandb.log_artifact(artifact, aliases=["latest"])
         print(f"Successfully uploaded explanations as Wandb artifact: {artifact_name}")
-        
     except Exception as e:
         print(f"Warning: Failed to upload explanations artifact to Wandb: {e}")
     finally:
@@ -409,24 +409,26 @@ def load_explanations_from_wandb(
             artifacts = list(run.logged_artifacts())
             explanations_artifacts = [a for a in artifacts if a.type == "explanations" and "evaluation_explanations" in a.name]
             
-            if explanations_artifacts:
-                # Use the latest explanations artifact (highest version)
-                latest_artifact = max(explanations_artifacts, key=lambda x: x.version)
-                artifact_dir = latest_artifact.download()
-                
-                explanations_path = Path(artifact_dir) / "explanations.json"
-                if explanations_path.exists():
-                    with open(explanations_path, "r") as f:
-                        explanations = json.load(f)
-                    print(f"Loaded explanations from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
-                    return explanations
-                    
+            if not explanations_artifacts:
+                print(f"No explanations found in run {run_id}")
+                return None
+            
+            # Use the latest explanations artifact (highest version)
+            latest_artifact = max(explanations_artifacts, key=lambda x: x.version)
+            artifact_dir = latest_artifact.download()
+            
+            explanations_path = Path(artifact_dir) / "explanations.json"
+            if explanations_path.exists():
+                with open(explanations_path, "r") as f:
+                    explanations = json.load(f)
+                print(f"Loaded explanations from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                return explanations
         except Exception as e:
             print(f"Could not load explanations from artifacts: {e}")
+            return None
         
         print(f"No explanations found in run {run_id}")
         return None
-            
     except Exception as e:
         print(f"Error loading explanations from Wandb: {e}")
         return None
