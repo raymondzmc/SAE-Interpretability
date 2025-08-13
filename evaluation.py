@@ -223,7 +223,12 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     
                     # Get activations based on SAE type
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
-                        acts = sae_output.z if hasattr(sae_output, 'z') else sae_output.c
+                        if args.hard_concrete_method == "c":
+                            acts = sae_output.c
+                        elif args.hard_concrete_method == "z":
+                            acts = sae_output.z
+                        else:
+                            raise ValueError(f"Invalid hard concrete method: {args.hard_concrete_method}")
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:
@@ -531,6 +536,8 @@ def main():
     # For debugging
     parser.add_argument("--override_n_train_samples", type=int, default=None,
                        help="Override n_train_samples to avoid slow data skipping (default: None - use config value)")
+    parser.add_argument("--hard_concrete_method", type=str, default="c", choices=["c", "z"],
+                       help="Method to use for Hard Concrete SAE (default: c)")
     
     args = parser.parse_args()
     
