@@ -29,17 +29,7 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
     sae_type = SAEType(config_dict["sae_type"])
     
     if sae_type == SAEType.HARD_CONCRETE:
-        # Bandaid fix for existing runs: infer input_dependent_gates from name if missing
-        config_dict_copy = config_dict.copy()
-        if "input_dependent_gates" not in config_dict_copy:
-            name = config_dict_copy.get("name", "")
-            if "no_learned_gates" in name:
-                config_dict_copy["input_dependent_gates"] = False
-                print(f"Bandaid fix: Setting input_dependent_gates=False based on name '{name}'")
-            else:
-                config_dict_copy["input_dependent_gates"] = True
-                print(f"Bandaid fix: Setting input_dependent_gates=True based on name '{name}'")
-        return HardConcreteSAEConfig.model_validate(config_dict_copy)
+        return HardConcreteSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.RELU:
         return ReLUSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED:

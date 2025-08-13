@@ -496,17 +496,8 @@ class SAETransformer(torch.nn.Module):
             device="cpu"  # Load to CPU first, then to target device in SAETransformer.__init__
         )
         
-        # Load checkpoint to inspect state_dict for input_dependent_gates compatibility
         checkpoint = torch.load(checkpoint_file, map_location="cpu")
         sae_config_dict = config["saes"]["value"].copy()
-        
-        # Auto-detect input_dependent_gates for HardConcrete SAEs if not specified  
-        if sae_config_dict.get("sae_type") == SAEType.HARD_CONCRETE and "input_dependent_gates" not in sae_config_dict:
-            # Check if any SAE has gate_logits parameter (indicates input_dependent_gates=False)
-            has_gate_logits = any("gate_logits" in key for key in checkpoint.keys())
-            sae_config_dict["input_dependent_gates"] = not has_gate_logits
-            print(f"Auto-detected input_dependent_gates={sae_config_dict['input_dependent_gates']} based on checkpoint")
-        
         model = cls(tlens_model=tlens_model, sae_config=create_sae_config(sae_config_dict))
         model.saes.load_state_dict(checkpoint)
         return model
