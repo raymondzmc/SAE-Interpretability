@@ -283,8 +283,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 # Convert alive components set to count and proportion
                 alive_components = metrics[sae_pos]['alive_dict_components']
                 num_alive = len(alive_components)
-                total_dict_size = accumulated_data[sae_pos]['neuron_indices'].max().item() + 1 if accumulated_data[sae_pos]['neuron_indices'].numel() > 0 else 1
-                
+                total_dict_size = model.saes[sae_pos.replace(".", "-")].n_dict_components
                 metrics[sae_pos]['alive_dict_components'] = num_alive
                 metrics[sae_pos]['alive_dict_components_proportion'] = num_alive / total_dict_size
             
