@@ -227,12 +227,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     
                     # Get activations based on SAE type
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
-                        if args.hard_concrete_method == "c":
-                            acts = sae_output.c
-                        elif args.hard_concrete_method == "z":
-                            acts = sae_output.z
-                        else:
-                            raise ValueError(f"Invalid hard concrete method: {args.hard_concrete_method}")
+                        acts = sae_output.c
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:
@@ -513,11 +508,12 @@ def main():
     # Window and processing parameters
     parser.add_argument("--window_size", type=int, default=64, 
                        help="Size of token windows for processing (default: 64)")
+
+    # Explanation parameters
     parser.add_argument("--num_neurons", type=int, default=300,
                        help="Number of top neurons to process per layer (default: 300)")
     parser.add_argument("--min_activated_features_per_neuron", type=int, default=100,
                        help="Minimum number of activated features to use for explanation per neuron (default: 100)")
-
     parser.add_argument("--num_features_to_explain", type=int, default=10,
                        help="Number of top activation examples to use for explanation (default: 10)")
     parser.add_argument("--n_eval_samples", type=int, default=50000,
