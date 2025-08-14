@@ -134,7 +134,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
         print(f"Attempting to load activation data from Wandb for run {run_id}...")
         try:
             accumulated_data, all_token_ids = load_activation_data_from_wandb(
-                run_id, project=args.wandb_project
+                run_id, project=args.wandb_project, output_path=args.output_path
             )
             
             print(f"Successfully loaded activation data from Wandb run files")
@@ -147,7 +147,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
         
         # Try to load existing metrics separately
         try:
-            loaded_metrics = load_metrics_from_wandb(run_id, project=args.wandb_project)
+            loaded_metrics = load_metrics_from_wandb(run_id, project=args.wandb_project, output_path=args.output_path)
             if loaded_metrics is not None and not args.force_recompute:
                 metrics = loaded_metrics
                 print(f"Loaded existing metrics from Wandb for {len(metrics)} SAE positions")
@@ -290,7 +290,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
             # Always save metrics
             print("Saving metrics to Wandb...")
             try:
-                save_metrics_to_wandb(metrics=metrics)
+                save_metrics_to_wandb(metrics=metrics, output_path=args.output_path)
             except Exception as e:
                 print(f"Warning: Failed to upload metrics to Wandb: {e}")
 
@@ -299,7 +299,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 print("Saving accumulated activation data to Wandb...")
                 save_activation_data_to_wandb(
                     accumulated_data=accumulated_data,
-                    all_token_ids=all_token_ids
+                    all_token_ids=all_token_ids,
+                    output_path=args.output_path
                 )
 
         # Collect metrics for pareto plot
@@ -513,11 +514,13 @@ def main():
                        help="Number of top neurons to process per layer (default: 300)")
     parser.add_argument("--min_activated_features_per_neuron", type=int, default=100,
                        help="Minimum number of activated features to use for explanation per neuron (default: 100)")
+    parser.add_argument("--max_activated_features_per_neuron", type=int, default=10000,
+                       help="Maximum number of activated features to use for explanation per neuron (default: 1000)")
     parser.add_argument("--num_features_to_explain", type=int, default=10,
                        help="Number of top activation examples to use for explanation (default: 10)")
     parser.add_argument("--n_eval_samples", type=int, default=50000,
                        help="Number of evaluation samples to process (default: 50000)")
-    parser.add_argument("--stratified_quantiles", type=int, default=4,
+    parser.add_argument("--stratified_quantiles", type=int, default=20,
                        help="Number of quantiles for stratified sampling of activation examples (default: 4)")
     
     # Model parameters
@@ -533,6 +536,8 @@ def main():
                        help="Wandb project in format 'entity/project' (default: raymondl/tinystories-1m)")
     parser.add_argument("--filter_runs_by_name", type=str, default=None,
                        help="Filter runs by a specific string in their name (default: None)")
+    parser.add_argument("--output_path", type=str, default="./artifacts",
+                       help="Path for storing temporary files and artifacts (default: ./artifacts)")
     
     # Execution flags
     parser.add_argument("--save_activation_data", action="store_true", default=False,

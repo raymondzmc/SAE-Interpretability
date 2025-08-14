@@ -76,30 +76,53 @@ def load_config(config_path_or_obj: Path | str | BaseModelType | dict[str, Any],
 def save_activation_data_to_wandb(
     accumulated_data: dict[str, dict[str, torch.Tensor]], 
     all_token_ids: list[list[str]] | None = None,
+    output_path: str = "./artifacts"
 ) -> None:
     """Save accumulated activation data as Wandb artifacts to the current run.
     
     Args:
         accumulated_data: Dictionary mapping SAE positions to activation data
         all_token_ids: Optional list of token ID sequences to save alongside activation data
+        output_path: Path for storing temporary files (default: ./artifacts)
     """
     # Ensure we have an active run
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
     
-    # Use a local artifacts directory instead of temp directory
-    # This avoids permission issues on shared systems
-    artifacts_base_dir = Path("./artifacts")
-    artifacts_base_dir.mkdir(parents=True, exist_ok=True)
+    # Check available disk space in the output path
+    import shutil
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    stat = shutil.disk_usage(str(output_path))
+    available_gb = stat.free / (1024**3)
+    
+    # Estimate size needed
+    total_elements = 0
+    for data in accumulated_data.values():
+        for key, value in data.items():
+            if isinstance(value, torch.Tensor):
+                total_elements += value.numel()
+    # float16 = 2 bytes, int64 = 8 bytes, estimate average of 4 bytes
+    estimated_gb = (total_elements * 4) / (1024**3)
+    
+    print(f"Output path: {output_path.absolute()}")
+    print(f"Available disk space: {available_gb:.2f} GB")
+    print(f"Estimated data size: {estimated_gb:.2f} GB")
+    
+    if available_gb < estimated_gb * 1.5:  # Need some buffer
+        print(f"WARNING: May not have enough disk space! Available: {available_gb:.2f} GB, Need: ~{estimated_gb:.2f} GB")
     
     # Create a unique subdirectory for this run
     run_id = wandb.run.id
-    activation_data_dir = artifacts_base_dir / f"activation_data_{run_id}"
+    activation_data_dir = output_path / f"activation_data_{run_id}"
     activation_data_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Using local directory for staging: {activation_data_dir}")
     
+    upload_successful = False
     try:
         # Save each layer's data to local files
+        saved_files = []
         for sae_pos, data in accumulated_data.items():
             safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
             file_path = activation_data_dir / f"{safe_layer_name}.pt"
@@ -113,21 +136,38 @@ def save_activation_data_to_wandb(
                     contiguous_data[key] = value
             
             try:
+                # Check disk space before each save
+                stat = shutil.disk_usage(str(output_path))
+                available_gb = stat.free / (1024**3)
+                
+                # Estimate size for this specific tensor
+                tensor_size_gb = sum(
+                    v.numel() * v.element_size() / (1024**3) 
+                    for v in contiguous_data.values() 
+                    if isinstance(v, torch.Tensor)
+                )
+                
+                if available_gb < tensor_size_gb * 1.2:
+                    raise RuntimeError(f"Insufficient disk space. Need ~{tensor_size_gb:.2f} GB, have {available_gb:.2f} GB")
+                
                 torch.save(contiguous_data, file_path)
-                print(f"Staged activation data for {sae_pos} at {file_path}")
-            except RuntimeError as e:
+                saved_files.append(file_path)
+                print(f"Staged activation data for {sae_pos} at {file_path} ({tensor_size_gb:.2f} GB)")
+            except Exception as e:
                 print(f"ERROR: Failed to save {sae_pos} data to {file_path}")
                 print(f"  Error: {e}")
                 # Print tensor info for debugging
                 for key, value in contiguous_data.items():
                     if isinstance(value, torch.Tensor):
-                        print(f"  {key}: shape={value.shape}, dtype={value.dtype}, device={value.device}")
+                        size_gb = value.numel() * value.element_size() / (1024**3)
+                        print(f"    {key}: shape={value.shape}, dtype={value.dtype}, size={size_gb:.2f} GB")
                 raise
         
         # Save token IDs if provided
         if all_token_ids is not None:
             token_ids_path = activation_data_dir / "all_token_ids.pt"
             torch.save(all_token_ids, token_ids_path)
+            saved_files.append(token_ids_path)
             print(f"Staged token IDs at {token_ids_path}")
         
         try:
@@ -149,32 +189,43 @@ def save_activation_data_to_wandb(
             # Log the artifact with "latest" alias to override previous versions
             wandb.log_artifact(artifact, aliases=["latest"])
             print(f"Successfully uploaded activation data as Wandb artifact: {artifact_name}")
+            upload_successful = True
             
         except Exception as e:
             print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
+            print(f"Local files remain at: {activation_data_dir}")
+            # Don't clean up if upload failed
     
     finally:
-        # Clean up local staging directory after upload
-        try:
-            import shutil
-            shutil.rmtree(activation_data_dir)
-            print(f"Cleaned up staging directory: {activation_data_dir}")
-        except Exception as e:
-            print(f"Warning: Could not clean up staging directory {activation_data_dir}: {e}")
+        # Only clean up if upload was successful
+        if upload_successful:
+            try:
+                import shutil
+                shutil.rmtree(activation_data_dir)
+                print(f"Cleaned up staging directory: {activation_data_dir}")
+            except Exception as e:
+                print(f"Warning: Could not clean up staging directory {activation_data_dir}: {e}")
+        else:
+            print(f"Keeping local files at: {activation_data_dir} (upload was not successful)")
 
 
 def save_metrics_to_wandb(
-    metrics: dict[str, dict[str, Any]]
+    metrics: dict[str, dict[str, Any]],
+    output_path: str = "/tmp"
 ) -> None:
     """Save evaluation metrics as a Wandb artifact to the current run.
     
     Args:
         metrics: Dictionary mapping SAE positions to their evaluation metrics
+        output_path: Path for storing temporary files (default: /tmp)
     """
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
     
-    # Use a temporary file for metrics
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='metrics_') as f:
+    # Use a temporary file for metrics in the specified output path
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='metrics_', dir=str(output_path)) as f:
         json.dump(metrics, f, indent=2)
         temp_metrics_path = f.name
     
@@ -214,13 +265,15 @@ def save_metrics_to_wandb(
 
 def load_activation_data_from_wandb(
     run_id: str,
-    project: str = "raymondl/tinystories-1m"
+    project: str = "raymondl/tinystories-1m",
+    output_path: str = "./artifacts"
 ) -> tuple[dict[str, dict[str, torch.Tensor]], list[list[str]] | None]:
     """Load accumulated activation data and token IDs from Wandb artifacts.
     
     Args:
         run_id: The Wandb run ID to load files from
         project: Wandb project name
+        output_path: Path for downloading artifacts (default: ./artifacts)
     
     Returns:
         Tuple of (activation_data_dict, all_token_ids)
@@ -250,7 +303,14 @@ def load_activation_data_from_wandb(
             
             # Use the latest activation data artifact (highest version)
             latest_artifact = max(activation_artifacts, key=lambda x: x.version)
-            artifact_dir = latest_artifact.download()
+            
+            # Download to the specified output path
+            output_path = Path(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            download_dir = output_path / f"downloaded_{run_id}"
+            
+            print(f"Downloading artifact to: {download_dir}")
+            artifact_dir = latest_artifact.download(root=str(download_dir))
             
             activation_data_path = Path(artifact_dir) / "activation_data"
             if not activation_data_path.exists():
@@ -278,6 +338,15 @@ def load_activation_data_from_wandb(
                 raise FileNotFoundError(f"No activation data tensors found in artifact for run {run_id}")
             
             print(f"Loaded activation data from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+            
+            # Clean up downloaded files after loading to memory
+            try:
+                import shutil
+                shutil.rmtree(download_dir)
+                print(f"Cleaned up downloaded files from: {download_dir}")
+            except Exception as e:
+                print(f"Warning: Could not clean up downloaded files at {download_dir}: {e}")
+            
             return accumulated_data, all_token_ids
         except Exception as e:
             print(f"Could not load activation data from artifacts: {e}")
@@ -291,13 +360,15 @@ def load_activation_data_from_wandb(
 
 def load_metrics_from_wandb(
     run_id: str,
-    project: str = "raymondl/tinystories-1m"
+    project: str = "raymondl/tinystories-1m",
+    output_path: str = "./artifacts"
 ) -> dict[str, dict[str, Any]] | None:
     """Load evaluation metrics from Wandb artifacts.
     
     Args:
         run_id: The Wandb run ID to load files from
         project: Wandb project name
+        output_path: Path for downloading artifacts (default: ./artifacts)
     
     Returns:
         Dictionary mapping SAE positions to their evaluation metrics, or None if not found
@@ -325,13 +396,27 @@ def load_metrics_from_wandb(
             
             # Use the latest metrics artifact (highest version)
             latest_artifact = max(metrics_artifacts, key=lambda x: x.version)
-            artifact_dir = latest_artifact.download()
+            
+            # Download to the specified output path
+            output_path = Path(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            download_dir = output_path / f"downloaded_metrics_{run_id}"
+            
+            artifact_dir = latest_artifact.download(root=str(download_dir))
             
             metrics_path = Path(artifact_dir) / "metrics.json"
             if metrics_path.exists():
                 with open(metrics_path, "r") as f:
                     metrics = json.load(f)
                 print(f"Loaded evaluation metrics from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                
+                # Clean up downloaded files after loading
+                try:
+                    import shutil
+                    shutil.rmtree(download_dir)
+                except Exception as e:
+                    print(f"Warning: Could not clean up downloaded files at {download_dir}: {e}")
+                
                 return metrics
         except Exception as e:
             print(f"Could not load metrics from artifacts: {e}")
