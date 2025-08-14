@@ -37,8 +37,7 @@ from utils.io import (
 from utils.enums import SAEType
 from utils.metrics import explained_variance
 from utils.plotting import create_pareto_plots
-from auto_interp.explainers.sampler import stratified_sample_by_max_activation
-from auto_interp.explainers.features import FeatureRecord, Feature, Example
+from auto_interp.explainers.features import FeatureRecord, Feature
 from auto_interp.explainers.explainer import DefaultExplainer, ExplainerResult
 from auto_interp.clients import OpenAIClient
 
@@ -300,7 +299,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 save_activation_data_to_wandb(
                     accumulated_data=accumulated_data,
                     all_token_ids=all_token_ids,
-                    output_path=args.output_path
+                    output_path=args.output_path,
+                    skip_upload=args.skip_upload
                 )
 
         # Collect metrics for pareto plot
@@ -342,11 +342,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 # Sort neurons by total activation (descending) and take top NUM_NEURONS
                 sorted_indices = torch.argsort(neuron_total_activations, descending=True)
                 top_neuron_indices = sorted_indices[:args.num_neurons]
-                top_neurons = unique_neurons[top_neuron_indices]
-                top_counts = counts[top_neuron_indices]
-                
-            #     # Take top neurons for explanation (we'll use top examples regardless of count)
-                neurons_to_explain = top_neurons
+                neurons_to_explain = unique_neurons[top_neuron_indices]
                 
                 print(f"SAE position {sae_pos}: {len(unique_neurons)} total neurons, taking top {args.num_neurons}")
                 print(f"  Processing {len(neurons_to_explain)} neurons for explanation...")
@@ -354,44 +350,34 @@ def run_evaluation(args: argparse.Namespace) -> None:
             #     # Process each neuron for explanation
                 for neuron_idx in neurons_to_explain:
                     neuron_idx_item = neuron_idx.item()
-                    feature_record = FeatureRecord(
-                        feature=Feature(
-                            module_name=f"{sae_pos}_neuron_{neuron_idx_item}",
-                            feature_index=neuron_idx_item
-                        )
+                    feature = Feature(
+                        sae_pos=sae_pos,
+                        neuron_idx=neuron_idx_item,
                     )
-
-                    # Get all data for this specific neuron
-                    neuron_mask = data['neuron_indices'] == neuron_idx
-                    neuron_data_indices = data['data_indices'][neuron_mask] # (n_examples)
-                    neuron_activations = data['nonzero_activations'][neuron_mask]  # (n_examples, seq_len)
-
-                    # Use stratified sampling to get diverse examples from different activation quantiles
-                    # This ensures we capture both high and low activation patterns
-                    if neuron_activations.nonzero().numel() < args.min_activated_features_per_neuron:
+                    # Use the new from_data class method for cleaner sampling
+                    feature_record = FeatureRecord.from_data(
+                        data=data,
+                        feature=feature,
+                        all_token_ids=all_token_ids,
+                        neuron_idx=neuron_idx,
+                        num_explanation_examples=args.num_features_to_explain,
+                        num_positive_examples=100,  # For scoring
+                        num_negative_examples=100,  # For scoring
+                        stratified_quantiles=args.stratified_quantiles,
+                        min_examples_required=args.min_activated_features_per_neuron,
+                        seed=42,
+                    )
+                    
+                    # Skip if we couldn't create a valid feature record
+                    if feature_record is None:
                         print(f"  Skipping neuron {neuron_idx_item} - not enough examples")
                         continue
-                    
-                    if len(neuron_data_indices) < args.num_features_to_explain:
-                        # If there are less than num_features_to_explain examples, use all of them
-                        sampled_indices = neuron_data_indices
-                    else:
-                        sampled_indices = stratified_sample_by_max_activation(
-                            neuron_activations=neuron_activations.float(),
-                            n_samples=args.num_features_to_explain,
-                            n_quantiles=args.stratified_quantiles,
-                            seed=42,
-                        )
-                    feature_record.examples = [
-                        Example(
-                            tokens=[token.replace("Ġ", "") for token in all_token_ids[neuron_data_indices[idx].item()]],
-                            activations=neuron_activations[idx].float().tolist(),
-                            normalized_activations=(neuron_activations[idx].float() * 10 / neuron_activations[idx].float().max()).floor(),
-                        )
-                        for idx in sampled_indices
-                    ]
+                    # Generate explanation using the explanation_examples
                     explanation: ExplainerResult = explainer(feature_record)
-                    print(explanation.explanation)
+                    print(f"  Neuron {neuron_idx_item}: {explanation.explanation}")
+                    
+                    # TODO: Use positive_examples and negative_examples for scoring
+                    # The scorer can access feature_record.positive_examples and feature_record.negative_examples
                     
             #         # Convert to activation records for top examples only
             #         activation_records = []
@@ -542,6 +528,9 @@ def main():
     # Execution flags
     parser.add_argument("--save_activation_data", action="store_true", default=False,
                        help="Save activation data (default: False)")
+    
+    parser.add_argument("--skip_upload", action="store_true", default=False,
+                       help="Skip uploading to Wandb, only save locally (default: False)")
     
     parser.add_argument("--generate_explanations", action="store_true", default=False,
                        help="Generate neuron explanations (default: False)")

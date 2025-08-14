@@ -76,7 +76,8 @@ def load_config(config_path_or_obj: Path | str | BaseModelType | dict[str, Any],
 def save_activation_data_to_wandb(
     accumulated_data: dict[str, dict[str, torch.Tensor]], 
     all_token_ids: list[list[str]] | None = None,
-    output_path: str = "./artifacts"
+    output_path: str = "./artifacts",
+    skip_upload: bool = False
 ) -> None:
     """Save accumulated activation data as Wandb artifacts to the current run.
     
@@ -84,9 +85,11 @@ def save_activation_data_to_wandb(
         accumulated_data: Dictionary mapping SAE positions to activation data
         all_token_ids: Optional list of token ID sequences to save alongside activation data
         output_path: Path for storing temporary files (default: ./artifacts)
+        skip_upload: If True, only save locally without uploading to Wandb (default: False)
     """
-    # Ensure we have an active run
-    assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
+    # Ensure we have an active run (unless we're skipping upload)
+    if not skip_upload:
+        assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
     
     # Check available disk space in the output path
     import shutil
@@ -109,11 +112,15 @@ def save_activation_data_to_wandb(
     print(f"Available disk space: {available_gb:.2f} GB")
     print(f"Estimated data size: {estimated_gb:.2f} GB")
     
-    if available_gb < estimated_gb * 1.5:  # Need some buffer
-        print(f"WARNING: May not have enough disk space! Available: {available_gb:.2f} GB, Need: ~{estimated_gb:.2f} GB")
+    # For Wandb upload, we need roughly 2x the space (original + Wandb's cache)
+    space_needed_for_upload = estimated_gb * 2.5
+    if not skip_upload and available_gb < space_needed_for_upload:
+        print(f"WARNING: May not have enough disk space for Wandb upload!")
+        print(f"  Available: {available_gb:.2f} GB, Need for upload: ~{space_needed_for_upload:.2f} GB")
+        print(f"  Consider using --skip_upload flag to save locally only")
     
     # Create a unique subdirectory for this run
-    run_id = wandb.run.id
+    run_id = wandb.run.id if wandb.run else "local"
     activation_data_dir = output_path / f"activation_data_{run_id}"
     activation_data_dir.mkdir(parents=True, exist_ok=True)
     
@@ -170,31 +177,41 @@ def save_activation_data_to_wandb(
             saved_files.append(token_ids_path)
             print(f"Staged token IDs at {token_ids_path}")
         
-        try:
-            # Create artifact name with run name and ID for easy identification
-            run_name = wandb.run.name or "unnamed"
-            # Clean run name for artifact naming (replace invalid characters)
-            clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
-            artifact_name = f"evaluation_activation_data_{clean_run_name}_{run_id}"
-            
-            # Create artifact for activation data with alias to override existing
-            artifact = wandb.Artifact(
-                name=artifact_name,
-                type="activation_data",
-                description=f"SAE activation data for run {run_name} ({run_id})"
-            )
-            # Add all files in the activation_data directory
-            artifact.add_dir(str(activation_data_dir), name="activation_data")
-            
-            # Log the artifact with "latest" alias to override previous versions
-            wandb.log_artifact(artifact, aliases=["latest"])
-            print(f"Successfully uploaded activation data as Wandb artifact: {artifact_name}")
-            upload_successful = True
-            
-        except Exception as e:
-            print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
-            print(f"Local files remain at: {activation_data_dir}")
-            # Don't clean up if upload failed
+        if skip_upload:
+            print(f"Skipping Wandb upload as requested. Files saved locally at: {activation_data_dir}")
+            upload_successful = False  # Don't clean up when skipping upload
+        else:
+            try:
+                # Create artifact name with run name and ID for easy identification
+                run_name = wandb.run.name or "unnamed"
+                # Clean run name for artifact naming (replace invalid characters)
+                clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+                artifact_name = f"evaluation_activation_data_{clean_run_name}_{run_id}"
+                
+                # Create artifact for activation data with alias to override existing
+                artifact = wandb.Artifact(
+                    name=artifact_name,
+                    type="activation_data",
+                    description=f"SAE activation data for run {run_name} ({run_id})"
+                )
+                
+                # Try to add files individually to better handle large datasets
+                print(f"Uploading {len(saved_files)} files to Wandb...")
+                for file_path in saved_files:
+                    file_size_gb = file_path.stat().st_size / (1024**3)
+                    print(f"  Adding {file_path.name} ({file_size_gb:.2f} GB) to artifact...")
+                    artifact.add_file(str(file_path), name=f"activation_data/{file_path.name}")
+                
+                # Log the artifact with "latest" alias to override previous versions
+                print("Logging artifact to Wandb...")
+                wandb.log_artifact(artifact, aliases=["latest"])
+                print(f"Successfully uploaded activation data as Wandb artifact: {artifact_name}")
+                upload_successful = True
+                
+            except Exception as e:
+                print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
+                print(f"Local files remain at: {activation_data_dir}")
+                # Don't clean up if upload failed
     
     finally:
         # Only clean up if upload was successful
@@ -206,7 +223,9 @@ def save_activation_data_to_wandb(
             except Exception as e:
                 print(f"Warning: Could not clean up staging directory {activation_data_dir}: {e}")
         else:
-            print(f"Keeping local files at: {activation_data_dir} (upload was not successful)")
+            if not skip_upload:
+                print(f"Keeping local files at: {activation_data_dir} (upload was not successful)")
+            # For skip_upload case, we already printed the message above
 
 
 def save_metrics_to_wandb(
