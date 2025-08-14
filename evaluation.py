@@ -83,6 +83,24 @@ def run_evaluation(args: argparse.Namespace) -> None:
     Run SAE evaluation including activation data collection, neuron explanation generation, and analysis.
     """
     
+    # Set Wandb cache directories to use output_path instead of home directory
+    import os
+    from pathlib import Path
+    output_path_abs = Path(args.output_path).absolute()
+    output_path_abs.mkdir(parents=True, exist_ok=True)
+    
+    wandb_cache_dir = output_path_abs / "wandb_cache"
+    wandb_cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Set environment variables BEFORE any Wandb operations
+    os.environ["WANDB_CACHE_DIR"] = str(wandb_cache_dir)
+    os.environ["WANDB_DATA_DIR"] = str(wandb_cache_dir)
+    os.environ["WANDB_DIR"] = str(wandb_cache_dir)
+    os.environ["TMPDIR"] = str(output_path_abs)  # Also set general temp directory
+    
+    print(f"Using Wandb cache directory: {wandb_cache_dir}")
+    print(f"Using temp directory: {output_path_abs}")
+    
     # OpenAI model mappings
     # OPENAI_MODELS = {
     #     "gpt-4o-mini": "gpt-4o-mini-07-18",
@@ -120,7 +138,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
             entity=args.wandb_project.split("/")[0],    # Extract entity  
             id=run_id,  # Use the same run ID
             resume="allow",  # Allow resuming existing run
-            reinit="finish_previous"
+            reinit="finish_previous",
+            dir=str(wandb_cache_dir)  # Explicitly set Wandb's working directory
         )
 
         metrics = {}

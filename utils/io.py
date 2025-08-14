@@ -92,6 +92,19 @@ def save_activation_data_to_wandb(
     # Ensure we have an active run (unless we're skipping upload)
     if not skip_upload:
         assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
+        
+        # Set Wandb's cache directories to use our output_path
+        import os
+        output_path_abs = Path(output_path).absolute()
+        wandb_cache_dir = output_path_abs / "wandb_cache"
+        wandb_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set environment variables for Wandb to use our directory
+        os.environ["WANDB_CACHE_DIR"] = str(wandb_cache_dir)
+        os.environ["WANDB_DATA_DIR"] = str(wandb_cache_dir)
+        os.environ["WANDB_DIR"] = str(wandb_cache_dir)
+        
+        print(f"Set Wandb cache directory to: {wandb_cache_dir}")
     
     # Check available disk space in the output path
     import shutil
