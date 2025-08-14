@@ -1,12 +1,15 @@
-from auto_interp.explainers.features import Example
 import random
 from collections import deque
 import torch
 import numpy as np
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from auto_interp.explainers.features import Example
 
 
 def split_activation_quantiles(
-    examples: list[Example], 
+    examples: list["Example"], 
     n_quantiles: int,
     n_samples: int,
     seed: int = 22

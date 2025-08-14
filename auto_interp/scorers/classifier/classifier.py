@@ -48,10 +48,10 @@ class Classifier(Scorer):
             samples,
         )
         
-        return ScorerResult(record=record, score=results)
+        return ScorerResult(record=record.record, score=results)
 
     @abstractmethod
-    def _prepare(self, record: FeatureRecord) -> list[list[Sample]]:
+    def _prepare(self, record: ExplainerResult) -> list[list[Sample]]:
         pass
 
     async def _query(

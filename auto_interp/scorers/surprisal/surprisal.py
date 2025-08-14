@@ -12,8 +12,8 @@ import torch
 from torch.nn.functional import cross_entropy
 from transformers import PreTrainedTokenizer
 
-from ...clients.client import Client
-from ...features import Example, FeatureRecord
+from ...clients import Client
+from ...explainers.features import Example, FeatureRecord
 from ..scorer import Scorer, ScorerResult
 from .prompts import BASEPROMPT as base_prompt
 

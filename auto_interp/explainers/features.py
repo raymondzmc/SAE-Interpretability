@@ -1,8 +1,9 @@
 from dataclasses import dataclass
-import blobfile as bf
-import orjson
+import random
 import torch
+import numpy as np
 from typing import Optional
+from auto_interp.explainers.sampler import stratified_sample_by_max_activation
 
 
 @dataclass
@@ -28,7 +29,10 @@ class Example:
         Returns:
             float: The maximum activation value.
         """
-        return self.activations.max()
+        if isinstance(self.activations, torch.Tensor):
+            return self.activations.max().item()
+        else:
+            return max(self.activations) if self.activations else 0.0
 
 
 @dataclass
@@ -39,9 +43,21 @@ class Feature:
     Attributes:
         module_name (str): The module name associated with the feature.
         feature_index (int): The index of the feature within the module.
+        sae_pos (str): Optional SAE position (alternative to module_name).
+        neuron_idx (int): Optional neuron index (alternative to feature_index).
     """
-    module_name: str
-    feature_index: int
+    module_name: Optional[str] = None
+    feature_index: Optional[int] = None
+    sae_pos: Optional[str] = None
+    neuron_idx: Optional[int] = None
+    
+    def __post_init__(self):
+        """Initialize module_name and feature_index from sae_pos and neuron_idx if provided."""
+        if self.sae_pos is not None and self.neuron_idx is not None:
+            self.module_name = f"{self.sae_pos}_neuron_{self.neuron_idx}"
+            self.feature_index = self.neuron_idx
+        elif self.module_name is None or self.feature_index is None:
+            raise ValueError("Must provide either (module_name, feature_index) or (sae_pos, neuron_idx)")
 
     def __repr__(self) -> str:
         """
@@ -60,6 +76,10 @@ class FeatureRecord:
     Attributes:
         feature (Feature): The feature associated with the record.
     """
+    explanation_examples: list[Example] = []
+    positive_examples: list[Example] = []
+    negative_examples: list[Example] = []
+    max_activation: float = 0.0
 
     def __init__(
         self,
@@ -72,36 +92,171 @@ class FeatureRecord:
             feature (Feature): The feature associated with the record.
         """
         self.feature: Feature = feature
-        self.examples: list[Example] = []
-        self.train: list[Example] = []
-        self.test: list[Example] = []
-
+        
     @property
-    def max_activation(self):
-        """
-        Get the maximum activation value for the feature.
+    def examples(self) -> list[Example]:
+        """Backward compatibility: returns explanation_examples."""
+        return self.explanation_examples
+    
+    @property
+    def test(self) -> list[list[Example]]:
+        """Backward compatibility: returns positive_examples as a single-element list for scorers."""
+        return [self.positive_examples] if self.positive_examples else []
+    
+    @property
+    def random_examples(self) -> list[Example]:
+        """Backward compatibility: returns negative_examples for detection scorer."""
+        return self.negative_examples
+    
+    @property
+    def extra_examples(self) -> list[Example]:
+        """Backward compatibility: returns negative_examples for fuzz scorer."""
+        return self.negative_examples
 
-        Returns:
-            float: The maximum activation value.
+    @classmethod
+    def from_data(
+        cls, 
+        data: dict[str, torch.Tensor],
+        feature: Feature,
+        all_token_ids: list[list[str]],
+        neuron_idx: int,
+        num_explanation_examples: int = 10,
+        num_positive_examples: int = 100,
+        num_negative_examples: int = 100,
+        stratified_quantiles: int = 20,
+        min_examples_required: int = 10,
+        seed: int = 42,
+    ) -> Optional["FeatureRecord"]:
         """
-        return self.examples[0].max_activation
-
-    def save(self, directory: str, save_examples=False):
-        """
-        Save the feature record to a file.
-
+        Construct a feature record from data by sampling examples.
+        
         Args:
-            directory (str): The directory to save the file in.
-            save_examples (bool): Whether to save the examples. Defaults to False.
+            data: Dictionary containing 'nonzero_activations', 'data_indices', and 'neuron_indices'
+            feature: The feature associated with the record
+            all_token_ids: List of tokenized sequences
+            neuron_idx: Index of the neuron to extract examples for
+            num_explanation_examples: Number of examples to use for explanation generation
+            num_positive_examples: Number of positive examples (where neuron is active) for scoring
+            num_negative_examples: Number of negative examples (where neuron is inactive) for scoring
+            stratified_quantiles: Number of quantiles for stratified sampling
+            min_examples_required: Minimum number of examples required to create a record
+            seed: Random seed for reproducibility
+            
+        Returns:
+            FeatureRecord with sampled examples, or None if insufficient data
         """
-        path = f"{directory}/{self.feature}.json"
-        serializable = self.__dict__
 
-        if not save_examples:
-            serializable.pop("examples")
-            serializable.pop("train")
-            serializable.pop("test")
-
-        serializable.pop("feature")
-        with bf.BlobFile(path, "wb") as f:
-            f.write(orjson.dumps(serializable))
+        # Set seeds for reproducibility
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        
+        # Get all data for this specific neuron (positive examples)
+        neuron_mask = data['neuron_indices'] == neuron_idx
+        neuron_data_indices = data['data_indices'][neuron_mask]  # (n_examples,)
+        neuron_activations = data['nonzero_activations'][neuron_mask]  # (n_examples, seq_len)
+        
+        # Check if we have enough positive examples
+        if len(neuron_data_indices) < min_examples_required:
+            return None
+            
+        # Create the feature record
+        record = cls(feature=feature)
+        
+        # Calculate max activation for this neuron
+        record.max_activation = neuron_activations.max().item() if len(neuron_activations) > 0 else 0.0
+        
+        # Helper function to create Example objects
+        def create_example(data_idx: int, activations: torch.Tensor) -> Example:
+            # Clean up GPT-2 byte-level BPE tokens
+            tokens = []
+            for token in all_token_ids[data_idx]:
+                # Common GPT-2 token replacements
+                clean_token = token.replace("Ġ", " ")  # Space at beginning of word
+                clean_token = clean_token.replace("Ċ", "\n")  # Newline
+                clean_token = clean_token.replace("ĉ", "\t")  # Tab
+                clean_token = clean_token.replace("Ñ", "–")  # En dash
+                clean_token = clean_token.replace("ñ", "—")  # Em dash
+                clean_token = clean_token.replace("Ģ", "′")  # Prime
+                clean_token = clean_token.replace("ģ", "″")  # Double prime
+                clean_token = clean_token.replace("Ġ", " ")  # Non-breaking space
+                
+                # Handle special quote marks and punctuation
+                clean_token = clean_token.replace("âĢĻ", "'")  # Opening single quote
+                clean_token = clean_token.replace("âĢĿ", "'")  # Closing single quote  
+                clean_token = clean_token.replace("âĢľ", '"')  # Opening double quote
+                clean_token = clean_token.replace("âĢĶ", '"')  # Closing double quote
+                clean_token = clean_token.replace("âĢĵ", "-")  # Hyphen/dash
+                clean_token = clean_token.replace("âĢ", "")  # Remove any remaining âĢ sequences
+                
+                tokens.append(clean_token)
+            # Use the feature's global max_activation for normalization
+            normalized = (activations.float() * 10 / record.max_activation).floor() if record.max_activation > 0 else torch.zeros_like(activations)
+            return Example(
+                tokens=tokens,
+                activations=activations.float().tolist(),
+                normalized_activations=normalized.tolist(),
+            )
+        
+        # 1. Joint stratified sampling for explanation and positive examples
+        # First, get all sorted indices based on max activation
+        max_activations = neuron_activations.max(dim=1).values
+        sorted_indices = torch.argsort(max_activations, descending=True)
+        
+        total_needed = min(num_explanation_examples + num_positive_examples, len(neuron_data_indices))
+        
+        if len(neuron_data_indices) <= total_needed:
+            # If we don't have enough examples, use all of them
+            all_sampled_indices = torch.arange(len(neuron_data_indices))
+        else:
+            # Do stratified sampling to get a good distribution across activation levels
+            all_sampled_indices = stratified_sample_by_max_activation(
+                neuron_activations=neuron_activations.float(),
+                n_samples=total_needed,
+                n_quantiles=stratified_quantiles,
+                seed=seed,
+            )
+        
+        # Split the stratified samples into explanation and positive examples
+        if len(all_sampled_indices) <= num_explanation_examples:
+            explanation_indices = all_sampled_indices
+            positive_indices = torch.tensor([], dtype=torch.long)
+        else:
+            # Take the first num_explanation_examples for explanations (highest activations)
+            explanation_indices = all_sampled_indices[:num_explanation_examples]
+            # Take the rest for positive examples
+            positive_indices = all_sampled_indices[num_explanation_examples:]
+        
+        # Create explanation examples
+        record.explanation_examples = [
+            create_example(neuron_data_indices[idx].item(), neuron_activations[idx])
+            for idx in explanation_indices
+        ]
+        
+        # Create positive examples
+        if len(positive_indices) > 0:
+            record.positive_examples = [
+                create_example(neuron_data_indices[idx].item(), neuron_activations[idx])
+                for idx in positive_indices
+            ]
+        
+        # 2. Sample negative examples (where neuron is NOT active)
+        # Get all data indices where this neuron is NOT present
+        all_possible_indices = set(range(len(all_token_ids)))
+        positive_data_indices = set(neuron_data_indices.tolist())
+        negative_data_indices = list(all_possible_indices - positive_data_indices)
+        
+        if len(negative_data_indices) > 0:
+            n_negative_to_sample = min(num_negative_examples, len(negative_data_indices))
+            negative_sample_indices = random.sample(negative_data_indices, n_negative_to_sample)
+            
+            # For negative examples, activations are all zeros
+            seq_len = neuron_activations.shape[1] if len(neuron_activations) > 0 else 64  # Use default seq_len
+            zero_activations = torch.zeros(seq_len)
+            
+            record.negative_examples = [
+                create_example(idx, zero_activations)
+                for idx in negative_sample_indices
+            ]
+        
+        return record

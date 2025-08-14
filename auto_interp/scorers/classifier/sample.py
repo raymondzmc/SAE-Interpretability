@@ -5,8 +5,8 @@ from typing import List, NamedTuple
 import torch
 from transformers import PreTrainedTokenizer
 
-from ...features import Example
-from ...logger import logger
+from ...explainers.features import Example
+from utils.logging import logger
 
 L = "<<"
 R = ">>"
@@ -67,48 +67,59 @@ def examples_to_samples(
 # NOTE: Should reorganize below, it's a little confusing
 
 def _prepare_text(
-    example,
+    example: Example,
     tokenizer: PreTrainedTokenizer,
     n_incorrect: int,
     threshold: float,
     highlighted: bool,
 ):
-    str_toks = tokenizer.batch_decode(example.tokens)
+    # Handle tokens that are already strings
+    if hasattr(tokenizer, 'is_mock') and tokenizer.is_mock:
+        # Tokens are already strings, just use them directly
+        str_toks = example.tokens
+    else:
+        # Normal case: decode tokens
+        str_toks = tokenizer.batch_decode(example.tokens)
+    
     clean = "".join(str_toks)
+    
     # Just return text if there's no highlighting
     if not highlighted:
-        return clean,clean
-
+        return clean, clean
+    
+    # Normalize threshold by max activation
     threshold = threshold * example.max_activation
-
-    # Highlight tokens with activations above threshold
-    # if correct example
+    
+    # Handle both tensor and list activations
+    if isinstance(example.activations, torch.Tensor):
+        activations = example.activations
+    else:
+        activations = torch.tensor(example.activations)
+    
+    # Highlight tokens with activations above threshold if correct example
     if n_incorrect == 0:
-
         def check(i):
-            return example.activations[i] >= threshold
-
-        return _highlight(str_toks, check),clean
-
-    # Highlight n_incorrect tokens with activations
-    # below threshold if incorrect example
-    below_threshold = torch.nonzero(example.activations <= threshold).squeeze()
-
+            return activations[i] >= threshold
+        return _highlight(str_toks, check), clean
+    
+    # Highlight n_incorrect tokens with activations below threshold if incorrect example
+    below_threshold = torch.nonzero(activations <= threshold).squeeze()
+    
     # Rare case where there are no tokens below threshold
     if below_threshold.dim() == 0:
         logger.error("Failed to prepare example.")
-        return DEFAULT_MESSAGE
-
+        return DEFAULT_MESSAGE, clean
+    
     random.seed(22)
-
+    
     n_incorrect = min(n_incorrect, len(below_threshold))
-
+    
     random_indices = set(random.sample(below_threshold.tolist(), n_incorrect))
-
+    
     def check(i):
         return i in random_indices
-
-    return _highlight(str_toks, check),clean
+    
+    return _highlight(str_toks, check), clean
 
 
 def _highlight(tokens, check):

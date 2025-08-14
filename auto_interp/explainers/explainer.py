@@ -45,11 +45,10 @@ class DefaultExplainer(Explainer):
         self.generation_kwargs = generation_kwargs
 
 
-    async def __call__(self, record: FeatureRecord) -> ExplainerResult:
-        messages = self._build_prompt(record.examples)
+    def __call__(self, record: FeatureRecord) -> ExplainerResult:
+        messages = self._build_prompt(record.explanation_examples)
         
-        response: Response = await self.client.generate(messages, **self.generation_kwargs)
-
+        response: Response = self.client.generate(messages, **self.generation_kwargs)
         try:
             explanation = self.parse_explanation(response.text)
             if self.verbose:
@@ -72,11 +71,21 @@ class DefaultExplainer(Explainer):
             logger.error(f"Explanation parsing regex failed: {e}")
             raise
         
-    def _highlight(self, index: int, example: FeatureRecord) -> str:
-        result = f"Example {index}: "
+    def _highlight(self, index: int, example: Example) -> str:
+        result = [f"Example {index}: "]
 
         threshold = example.max_activation * self.threshold
-        if self.tokenizer is not None:
+        
+        # Check if tokens are already strings or need decoding
+        if not example.tokens or len(example.tokens) == 0:
+            # Handle empty tokens case
+            example.str_toks = []
+            return "".join(result) + "[No tokens]"
+        elif isinstance(example.tokens[0], str):
+            # Tokens are already strings
+            example.str_toks = example.tokens
+        elif self.tokenizer is not None:
+            # Tokens are IDs, need decoding
             str_toks = self.tokenizer.batch_decode(example.tokens)
             example.str_toks = str_toks
         else:
@@ -84,6 +93,7 @@ class DefaultExplainer(Explainer):
             example.str_toks = example.tokens
 
         activations = example.activations
+        str_toks = example.str_toks  # Use the str_toks we just set
 
         def check(i):
             return activations[i] > threshold
@@ -91,14 +101,14 @@ class DefaultExplainer(Explainer):
         i = 0
         while i < len(str_toks):
             if check(i):
-                result += "<<"
+                result.append("<<")
 
                 while i < len(str_toks) and check(i):
-                    result += str_toks[i]
+                    result.append(str_toks[i])
                     i += 1
-                result += ">>"
+                result.append(">>")
             else:
-                result += str_toks[i]
+                result.append(str_toks[i])
                 i += 1
 
         return "".join(result)

@@ -1,6 +1,5 @@
-from typing import List
-
-from ...features import Example
+import asyncio
+from ...explainers.features import Example
 from .oai_autointerp import (
     ActivationRecord,
     ExplanationNeuronSimulator,

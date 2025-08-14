@@ -4,7 +4,8 @@ from transformers import PreTrainedTokenizer
 
 from auto_interp.clients import Client
 from auto_interp.explainers.features import FeatureRecord
-from auto_interp.scorers.classifier import Classifier
+from auto_interp.explainers.explainer import ExplainerResult
+from auto_interp.scorers.classifier.classifier import Classifier
 from auto_interp.scorers.classifier.prompts.detection_prompt import prompt
 from auto_interp.scorers.classifier.sample import Sample, examples_to_samples
 
@@ -32,23 +33,28 @@ class DetectionScorer(Classifier):
 
         self.prompt = prompt
 
-    def _prepare(self, record: FeatureRecord) -> list[list[Sample]]:
+    def _prepare(self, result: ExplainerResult) -> list[list[Sample]]:
         """
         Prepare and shuffle a list of samples for classification.
         """
+        # Extract the FeatureRecord from ExplainerResult
+        record = result.record
 
+        # Negative examples (contrastive)
         samples = examples_to_samples(
-            record.random_examples,
+            record.negative_examples,  # Updated from record.random_examples
             distance=-1,
             ground_truth=False,
             tokenizer=self.tokenizer,
         )
 
-        for i, examples in enumerate(record.test):
+        # Positive examples 
+        # Note: positive_examples is a simple list, not list of lists
+        if record.positive_examples:
             samples.extend(
                 examples_to_samples(
-                    examples,
-                    distance=i + 1,
+                    record.positive_examples,
+                    distance=1,
                     ground_truth=True,
                     tokenizer=self.tokenizer,
                 )

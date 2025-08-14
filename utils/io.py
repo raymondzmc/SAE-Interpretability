@@ -398,14 +398,22 @@ def save_metrics_to_wandb(
 def load_activation_data_from_wandb(
     run_id: str,
     project: str = "raymondl/tinystories-1m",
-    output_path: str = "./artifacts"
+    output_path: str = "./artifacts",
+    use_cached: bool = True,
+    parallel_download: bool = True,
+    max_workers: int = 4
 ) -> tuple[dict[str, dict[str, torch.Tensor]], list[list[str]] | None]:
     """Load accumulated activation data and token IDs from Wandb artifacts.
+    
+    Supports both single artifact format and chunked artifact format.
     
     Args:
         run_id: The Wandb run ID to load files from
         project: Wandb project name
         output_path: Path for downloading artifacts (default: ./artifacts)
+        use_cached: If True, use locally cached files if they exist (default: True)
+        parallel_download: If True, download chunks in parallel (default: True)
+        max_workers: Maximum number of parallel downloads (default: 4)
     
     Returns:
         Tuple of (activation_data_dict, all_token_ids)
@@ -415,6 +423,34 @@ def load_activation_data_from_wandb(
         RuntimeError: If the files exist but can't be loaded
     """
     try:
+        # Check for local cache first
+        output_path = Path(output_path)
+        local_cache_dir = output_path / f"cached_{run_id}"
+        
+        if use_cached and local_cache_dir.exists():
+            print(f"Found local cache at: {local_cache_dir}")
+            print("Loading from local cache (skip download)...")
+            
+            accumulated_data: dict[str, dict[str, torch.Tensor]] = {}
+            all_token_ids: list[list[str]] | None = None
+            
+            # Load from local cache
+            for file_path in local_cache_dir.glob("*.pt"):
+                filename = file_path.name
+                if filename == "all_token_ids.pt":
+                    all_token_ids = torch.load(file_path, map_location='cpu')
+                    print(f"  Loaded token IDs from cache")
+                else:
+                    safe_layer_name = filename[:-3]
+                    sae_pos = safe_layer_name.replace("--", ".")
+                    data = torch.load(file_path, map_location='cpu')
+                    accumulated_data[sae_pos] = data
+                    print(f"  Loaded {sae_pos} from cache")
+            
+            if accumulated_data:
+                print(f"Successfully loaded {len(accumulated_data)} SAE positions from local cache")
+                return accumulated_data, all_token_ids
+        
         # Initialize Wandb API
         api = wandb.Api()
         
@@ -424,10 +460,127 @@ def load_activation_data_from_wandb(
         except wandb.errors.CommError:
             raise FileNotFoundError(f"Run {run_id} not found in project {project}")
         
-        # Load from artifacts
+        # Get all logged artifacts from this run
+        artifacts = list(run.logged_artifacts())
+        
+        # First, try to load from chunked artifacts (new format)
         try:
-            # Get all logged artifacts from this run
-            artifacts = list(run.logged_artifacts())
+            chunk_artifacts = [a for a in artifacts if a.type == "activation_data_chunk" and run_id in a.name]
+            
+            if chunk_artifacts:
+                print(f"Found {len(chunk_artifacts)} chunked activation data artifacts")
+                
+                # Create cache directory
+                local_cache_dir.mkdir(parents=True, exist_ok=True)
+                
+                accumulated_data: dict[str, dict[str, torch.Tensor]] = {}
+                all_token_ids: list[list[str]] | None = None
+                
+                if parallel_download and len(chunk_artifacts) > 1:
+                    # Parallel download using ThreadPoolExecutor
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                
+                def download_chunk(chunk_artifact, idx):
+                    """Download a single chunk."""
+                    print(f"Starting download of chunk {idx}/{len(chunk_artifacts)}: {chunk_artifact.name.split('_')[-1]}")
+                    
+                    # Download to temp directory
+                    temp_dir = output_path / f"temp_chunk_{idx:03d}_{run_id}"
+                    chunk_dir = chunk_artifact.download(root=str(temp_dir))
+                    
+                    # Process the chunk
+                    result_data = {}
+                    result_token_ids = None
+                    
+                    for file_path in Path(chunk_dir).glob("*.pt"):
+                        filename = file_path.name
+                        cache_path = local_cache_dir / filename
+                        
+                        # Copy to cache
+                        import shutil
+                        shutil.copy2(file_path, cache_path)
+                        
+                        if filename == "all_token_ids.pt":
+                            result_token_ids = torch.load(cache_path, map_location='cpu')
+                            print(f"  Downloaded token IDs")
+                        else:
+                            safe_layer_name = filename[:-3]
+                            sae_pos = safe_layer_name.replace("--", ".")
+                            data = torch.load(cache_path, map_location='cpu')
+                            result_data[sae_pos] = data
+                            print(f"  Downloaded {sae_pos}")
+                    
+                    # Clean up temp directory
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except:
+                        pass
+                    
+                    return result_data, result_token_ids
+                
+                print(f"Downloading {len(chunk_artifacts)} chunks in parallel (max {max_workers} workers)...")
+                
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all download tasks
+                    future_to_idx = {
+                        executor.submit(download_chunk, chunk, i): i 
+                        for i, chunk in enumerate(chunk_artifacts, 1)
+                    }
+                    
+                    # Process completed downloads
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        try:
+                            chunk_data, chunk_token_ids = future.result()
+                            accumulated_data.update(chunk_data)
+                            if chunk_token_ids is not None:
+                                all_token_ids = chunk_token_ids
+                        except Exception as e:
+                            print(f"Error downloading chunk {idx}: {e}")
+                
+            else:
+                # Sequential download (original method)
+                for i, chunk_artifact in enumerate(chunk_artifacts, 1):
+                    print(f"Downloading chunk {i}/{len(chunk_artifacts)}: {chunk_artifact.name}")
+                    
+                    # Download to temp directory
+                    temp_dir = output_path / f"temp_chunk_{i:03d}_{run_id}"
+                    chunk_dir = chunk_artifact.download(root=str(temp_dir))
+                    
+                    # Copy files to cache and load
+                    for file_path in Path(chunk_dir).glob("*.pt"):
+                        filename = file_path.name
+                        cache_path = local_cache_dir / filename
+                        
+                        # Copy to cache
+                        import shutil
+                        shutil.copy2(file_path, cache_path)
+                        
+                        if filename == "all_token_ids.pt":
+                            all_token_ids = torch.load(cache_path, map_location='cpu')
+                            print(f"  Loaded token IDs from chunk")
+                        else:
+                            safe_layer_name = filename[:-3]
+                            sae_pos = safe_layer_name.replace("--", ".")
+                            data = torch.load(cache_path, map_location='cpu')
+                            accumulated_data[sae_pos] = data
+                            print(f"  Loaded activation data for {sae_pos}")
+                    
+                    # Clean up temp directory
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except:
+                        pass
+            
+            if accumulated_data:
+                print(f"Successfully loaded {len(accumulated_data)} SAE positions from chunks")
+                print(f"Data cached at: {local_cache_dir}")
+                return accumulated_data, all_token_ids
+        except Exception as e:
+            print(f"Could not load from chunked artifacts: {e}")
+        
+        # Fall back to loading from single artifact (old format)
+        try:
             activation_artifacts = [a for a in artifacts if a.type == "activation_data" and "evaluation_activation_data" in a.name]
             
             if not activation_artifacts:
