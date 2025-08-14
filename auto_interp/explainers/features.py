@@ -15,9 +15,10 @@ class Example:
         activations (TensorType["seq"]): Activation values for the input sequence.
         normalized_activations (TensorType["seq"]): Normalized activation values.
     """
-    tokens: torch.Tensor
+    tokens: list[str]
     activations: torch.Tensor
     normalized_activations: Optional[torch.Tensor] = None
+    str_toks: Optional[list[str]] = None
     
     @property
     def max_activation(self):
@@ -70,10 +71,10 @@ class FeatureRecord:
         Args:
             feature (Feature): The feature associated with the record.
         """
-        self.feature = feature
-        self.examples = []
-        self.train = []
-        self.test = []
+        self.feature: Feature = feature
+        self.examples: list[Example] = []
+        self.train: list[Example] = []
+        self.test: list[Example] = []
 
     @property
     def max_activation(self):

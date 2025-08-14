@@ -26,6 +26,10 @@ class Settings(BaseModel):
         default=None,
         description="OpenAI API key for autointerp and other AI-powered features"
     )
+    together_ai_api_key: Optional[str] = Field(
+        default=None,
+        description="TogetherAI API key for autointerp and other AI-powered features"
+    )
     hf_access_token: Optional[str] = Field(
         default=None,
         description="Hugging Face token for accessing models and datasets"
@@ -62,6 +66,7 @@ class Settings(BaseModel):
             "wandb_api_key": os.getenv("WANDB_API_KEY"),
             "wandb_entity": os.getenv("WANDB_ENTITY"),
             "openai_api_key": os.getenv("OPENAI_API_KEY"),
+            "together_ai_api_key": os.getenv("TOGETHER_AI_API_KEY"),
             "hf_access_token": os.getenv("HF_ACCESS_TOKEN") or os.getenv("HF_TOKEN"),
             "output_dir": os.getenv("OUTPUT_DIR"),
         }
@@ -109,6 +114,10 @@ WANDB_ENTITY=your-wandb-entity
 # API Keys
 # Get from https://platform.openai.com/api-keys
 OPENAI_API_KEY=your-openai-api-key
+
+# TogetherAI API key for autointerp and other AI-powered features
+# Get from https://api.together.ai/settings/api-keys
+TOGETHER_AI_API_KEY=your-together-ai-api-key
 
 # Hugging Face access token for accessing models/datasets
 # Get from https://huggingface.co/settings/tokens

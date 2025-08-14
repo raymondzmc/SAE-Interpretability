@@ -124,14 +124,11 @@ def run_evaluation(args: argparse.Namespace) -> None:
             reinit="finish_previous"
         )
 
-        _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
         metrics = {}
         accumulated_data = None
         all_token_ids = None
         loaded_metrics = None
         tokenizer = AutoTokenizer.from_pretrained(config.data.tokenizer_name)
-        model = SAETransformer.from_wandb(f"{args.wandb_project}/{run_id}").to(device)
-        model.saes.eval()
 
         # Try to load existing data from Wandb
         print(f"Attempting to load activation data from Wandb for run {run_id}...")
@@ -159,9 +156,13 @@ def run_evaluation(args: argparse.Namespace) -> None:
         except Exception as e:
             print(f"No existing metrics found: {e}")
             print("Will compute metrics from scratch")
-
         if accumulated_data is None or len(metrics) == 0:
             print(f"Obtaining features for {run_id}")
+
+            # Load model and dataloader
+            _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
+            model = SAETransformer.from_wandb(f"{args.wandb_project}/{run_id}").to(device)
+            model.saes.eval()
             total_tokens = 0
             all_token_ids: list[list[str]] = []
 
@@ -276,9 +277,9 @@ def run_evaluation(args: argparse.Namespace) -> None:
 
             for sae_pos in model.raw_sae_positions:
                 if args.save_activation_data:
-                    accumulated_data[sae_pos]['nonzero_activations'] = torch.cat(accumulated_data[sae_pos]['nonzero_activations'], dim=0)
-                    accumulated_data[sae_pos]['data_indices'] = torch.cat(accumulated_data[sae_pos]['data_indices'], dim=0)
-                    accumulated_data[sae_pos]['neuron_indices'] = torch.cat(accumulated_data[sae_pos]['neuron_indices'], dim=0)
+                    accumulated_data[sae_pos]['nonzero_activations'] = torch.cat(accumulated_data[sae_pos]['nonzero_activations'], dim=0).contiguous()
+                    accumulated_data[sae_pos]['data_indices'] = torch.cat(accumulated_data[sae_pos]['data_indices'], dim=0).contiguous()
+                    accumulated_data[sae_pos]['neuron_indices'] = torch.cat(accumulated_data[sae_pos]['neuron_indices'], dim=0).contiguous()
 
                 metrics[sae_pos]['sparsity_l0'] /= total_tokens
                 metrics[sae_pos]['mse'] /= total_tokens
@@ -302,15 +303,10 @@ def run_evaluation(args: argparse.Namespace) -> None:
             # Save activation data to Wandb
             if args.save_activation_data:
                 print("Saving accumulated activation data to Wandb...")
-                try:
-                    save_activation_data_to_wandb(
-                        accumulated_data=accumulated_data,
-                        all_token_ids=all_token_ids
-                    )
-                except Exception as e:
-                    print(f"Warning: Failed to upload activation data to Wandb: {e}")
-            
-            
+                save_activation_data_to_wandb(
+                    accumulated_data=accumulated_data,
+                    all_token_ids=all_token_ids
+                )
 
         # Collect metrics for pareto plot
         run_metrics = {

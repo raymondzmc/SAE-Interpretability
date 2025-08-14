@@ -1,11 +1,11 @@
 import re
 from abc import ABC, abstractmethod
 from typing import NamedTuple
-
-from auto_interp.explainers.features import FeatureRecord
+from transformers import PreTrainedTokenizer
+from auto_interp.clients import Client, Response
+from auto_interp.explainers.features import FeatureRecord, Example
 from auto_interp.explainers.prompts import build_prompt
 from utils.logging import logger
-from transformers import PreTrainedTokenizer
 
 
 class ExplainerResult(NamedTuple):
@@ -18,7 +18,7 @@ class ExplainerResult(NamedTuple):
 
 class Explainer(ABC):
     @abstractmethod
-    def __call__(self, record: FeatureRecord) -> ExplainerResult:
+    async def __call__(self, record: FeatureRecord) -> ExplainerResult:
         pass
 
 
@@ -27,7 +27,7 @@ class DefaultExplainer(Explainer):
 
     def __init__(
         self,
-        client,
+        client: Client,
         tokenizer: PreTrainedTokenizer | None = None,
         verbose: bool = False,
         activations: bool = False,
@@ -45,10 +45,10 @@ class DefaultExplainer(Explainer):
         self.generation_kwargs = generation_kwargs
 
 
-    async def __call__(self, record):
-        messages = self._build_prompt(record.train)
+    async def __call__(self, record: FeatureRecord) -> ExplainerResult:
+        messages = self._build_prompt(record.examples)
         
-        response = await self.client.generate(messages, **self.generation_kwargs)
+        response: Response = await self.client.generate(messages, **self.generation_kwargs)
 
         try:
             explanation = self.parse_explanation(response.text)
@@ -72,7 +72,7 @@ class DefaultExplainer(Explainer):
             logger.error(f"Explanation parsing regex failed: {e}")
             raise
         
-    def _highlight(self, index, example):
+    def _highlight(self, index: int, example: FeatureRecord) -> str:
         result = f"Example {index}: "
 
         threshold = example.max_activation * self.threshold
@@ -103,7 +103,7 @@ class DefaultExplainer(Explainer):
 
         return "".join(result)
 
-    def _join_activations(self, example):
+    def _join_activations(self, example: Example) -> str:
         activations = []
 
         threshold = 0.6
@@ -115,8 +115,8 @@ class DefaultExplainer(Explainer):
 
         return "Activations: " + acts
 
-    def _build_prompt(self, examples):
-        highlighted_examples = []
+    def _build_prompt(self, examples: list[Example]) -> list[dict[str, str]]:
+        highlighted_examples: list[str] = []
 
         for i, example in enumerate(examples):
             highlighted_examples.append(self._highlight(i + 1, example))
