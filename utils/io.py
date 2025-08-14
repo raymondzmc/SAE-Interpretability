@@ -73,7 +73,6 @@ def load_config(config_path_or_obj: Path | str | BaseModelType | dict[str, Any],
 
 
 # File Upload Functions
-
 def save_activation_data_to_wandb(
     accumulated_data: dict[str, dict[str, torch.Tensor]], 
     all_token_ids: list[list[str]] | None = None,
@@ -86,19 +85,44 @@ def save_activation_data_to_wandb(
     """
     # Ensure we have an active run
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
-
-    # Create temporary directory for staging files
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        activation_data_dir = temp_path / "activation_data"
-        activation_data_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save each layer's data to temp files
+    
+    # Use a local artifacts directory instead of temp directory
+    # This avoids permission issues on shared systems
+    artifacts_base_dir = Path("./artifacts")
+    artifacts_base_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create a unique subdirectory for this run
+    run_id = wandb.run.id
+    activation_data_dir = artifacts_base_dir / f"activation_data_{run_id}"
+    activation_data_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Using local directory for staging: {activation_data_dir}")
+    
+    try:
+        # Save each layer's data to local files
         for sae_pos, data in accumulated_data.items():
             safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
             file_path = activation_data_dir / f"{safe_layer_name}.pt"
-            torch.save(data, file_path)
-            print(f"Staged activation data for {sae_pos} at {file_path}")
+            
+            # Make tensors contiguous before saving to avoid serialization issues
+            contiguous_data = {}
+            for key, value in data.items():
+                if isinstance(value, torch.Tensor):
+                    contiguous_data[key] = value.contiguous()
+                else:
+                    contiguous_data[key] = value
+            
+            try:
+                torch.save(contiguous_data, file_path)
+                print(f"Staged activation data for {sae_pos} at {file_path}")
+            except RuntimeError as e:
+                print(f"ERROR: Failed to save {sae_pos} data to {file_path}")
+                print(f"  Error: {e}")
+                # Print tensor info for debugging
+                for key, value in contiguous_data.items():
+                    if isinstance(value, torch.Tensor):
+                        print(f"  {key}: shape={value.shape}, dtype={value.dtype}, device={value.device}")
+                raise
         
         # Save token IDs if provided
         if all_token_ids is not None:
@@ -109,7 +133,6 @@ def save_activation_data_to_wandb(
         try:
             # Create artifact name with run name and ID for easy identification
             run_name = wandb.run.name or "unnamed"
-            run_id = wandb.run.id
             # Clean run name for artifact naming (replace invalid characters)
             clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
             artifact_name = f"evaluation_activation_data_{clean_run_name}_{run_id}"
@@ -129,6 +152,15 @@ def save_activation_data_to_wandb(
             
         except Exception as e:
             print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
+    
+    finally:
+        # Clean up local staging directory after upload
+        try:
+            import shutil
+            shutil.rmtree(activation_data_dir)
+            print(f"Cleaned up staging directory: {activation_data_dir}")
+        except Exception as e:
+            print(f"Warning: Could not clean up staging directory {activation_data_dir}: {e}")
 
 
 def save_metrics_to_wandb(
