@@ -300,7 +300,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     accumulated_data=accumulated_data,
                     all_token_ids=all_token_ids,
                     output_path=args.output_path,
-                    skip_upload=args.skip_upload
+                    skip_upload=args.skip_upload,
+                    chunk_upload=not args.no_chunk_upload  # Default is True unless disabled
                 )
 
         # Collect metrics for pareto plot
@@ -531,6 +532,9 @@ def main():
     
     parser.add_argument("--skip_upload", action="store_true", default=False,
                        help="Skip uploading to Wandb, only save locally (default: False)")
+    
+    parser.add_argument("--no_chunk_upload", action="store_true", default=False,
+                       help="Disable chunked upload (upload all files at once) (default: False)")
     
     parser.add_argument("--generate_explanations", action="store_true", default=False,
                        help="Generate neuron explanations (default: False)")

@@ -77,7 +77,8 @@ def save_activation_data_to_wandb(
     accumulated_data: dict[str, dict[str, torch.Tensor]], 
     all_token_ids: list[list[str]] | None = None,
     output_path: str = "./artifacts",
-    skip_upload: bool = False
+    skip_upload: bool = False,
+    chunk_upload: bool = True
 ) -> None:
     """Save accumulated activation data as Wandb artifacts to the current run.
     
@@ -86,6 +87,7 @@ def save_activation_data_to_wandb(
         all_token_ids: Optional list of token ID sequences to save alongside activation data
         output_path: Path for storing temporary files (default: ./artifacts)
         skip_upload: If True, only save locally without uploading to Wandb (default: False)
+        chunk_upload: If True, upload each file individually and clean up immediately (default: True)
     """
     # Ensure we have an active run (unless we're skipping upload)
     if not skip_upload:
@@ -112,29 +114,60 @@ def save_activation_data_to_wandb(
     print(f"Available disk space: {available_gb:.2f} GB")
     print(f"Estimated data size: {estimated_gb:.2f} GB")
     
-    # For Wandb upload, we need roughly 2x the space (original + Wandb's cache)
-    space_needed_for_upload = estimated_gb * 2.5
-    if not skip_upload and available_gb < space_needed_for_upload:
-        print(f"WARNING: May not have enough disk space for Wandb upload!")
-        print(f"  Available: {available_gb:.2f} GB, Need for upload: ~{space_needed_for_upload:.2f} GB")
-        print(f"  Consider using --skip_upload flag to save locally only")
+    # For chunked upload, we only need space for one file at a time
+    if chunk_upload and not skip_upload:
+        # Find the largest single file size
+        max_file_gb = 0
+        for data in accumulated_data.values():
+            file_size_gb = sum(
+                v.numel() * v.element_size() / (1024**3) 
+                for v in data.values() 
+                if isinstance(v, torch.Tensor)
+            )
+            max_file_gb = max(max_file_gb, file_size_gb)
+        
+        space_needed = max_file_gb * 2  # Need space for file + Wandb's cache
+        if available_gb < space_needed:
+            print(f"WARNING: May not have enough disk space even for chunked upload!")
+            print(f"  Available: {available_gb:.2f} GB, Need per chunk: ~{space_needed:.2f} GB")
+    else:
+        # For non-chunked upload or skip_upload, check total space
+        space_needed_for_upload = estimated_gb * 2.5
+        if not skip_upload and available_gb < space_needed_for_upload:
+            print(f"WARNING: May not have enough disk space for full upload!")
+            print(f"  Available: {available_gb:.2f} GB, Need for upload: ~{space_needed_for_upload:.2f} GB")
+            print(f"  Consider using chunked upload (default) or --skip_upload flag")
     
     # Create a unique subdirectory for this run
     run_id = wandb.run.id if wandb.run else "local"
+    run_name = wandb.run.name if wandb.run else "local"
+    clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
+    
     activation_data_dir = output_path / f"activation_data_{run_id}"
     activation_data_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Using local directory for staging: {activation_data_dir}")
     
-    upload_successful = False
-    try:
-        # Save each layer's data to local files
-        saved_files = []
+    if skip_upload:
+        # Save all files locally without uploading
+        print("Saving all files locally (skip_upload=True)...")
+        _save_all_files_locally(accumulated_data, all_token_ids, activation_data_dir, output_path)
+        print(f"Files saved locally at: {activation_data_dir}")
+    elif chunk_upload and not skip_upload:
+        # Chunked upload: save and upload one file at a time
+        print("Using chunked upload strategy to minimize disk usage...")
+        chunk_idx = 0
+        total_chunks = len(accumulated_data) + (1 if all_token_ids is not None else 0)
+        
+        # Upload each SAE position's data as a separate chunk
         for sae_pos, data in accumulated_data.items():
+            chunk_idx += 1
+            print(f"\n[Chunk {chunk_idx}/{total_chunks}] Processing {sae_pos}...")
+            
             safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
             file_path = activation_data_dir / f"{safe_layer_name}.pt"
             
-            # Make tensors contiguous before saving to avoid serialization issues
+            # Make tensors contiguous before saving
             contiguous_data = {}
             for key, value in data.items():
                 if isinstance(value, torch.Tensor):
@@ -142,90 +175,157 @@ def save_activation_data_to_wandb(
                 else:
                     contiguous_data[key] = value
             
+            # Save the chunk
+            tensor_size_gb = sum(
+                v.numel() * v.element_size() / (1024**3) 
+                for v in contiguous_data.values() 
+                if isinstance(v, torch.Tensor)
+            )
+            
             try:
-                # Check disk space before each save
-                stat = shutil.disk_usage(str(output_path))
-                available_gb = stat.free / (1024**3)
-                
-                # Estimate size for this specific tensor
-                tensor_size_gb = sum(
-                    v.numel() * v.element_size() / (1024**3) 
-                    for v in contiguous_data.values() 
-                    if isinstance(v, torch.Tensor)
-                )
-                
-                if available_gb < tensor_size_gb * 1.2:
-                    raise RuntimeError(f"Insufficient disk space. Need ~{tensor_size_gb:.2f} GB, have {available_gb:.2f} GB")
-                
                 torch.save(contiguous_data, file_path)
-                saved_files.append(file_path)
-                print(f"Staged activation data for {sae_pos} at {file_path} ({tensor_size_gb:.2f} GB)")
-            except Exception as e:
-                print(f"ERROR: Failed to save {sae_pos} data to {file_path}")
-                print(f"  Error: {e}")
-                # Print tensor info for debugging
-                for key, value in contiguous_data.items():
-                    if isinstance(value, torch.Tensor):
-                        size_gb = value.numel() * value.element_size() / (1024**3)
-                        print(f"    {key}: shape={value.shape}, dtype={value.dtype}, size={size_gb:.2f} GB")
-                raise
-        
-        # Save token IDs if provided
-        if all_token_ids is not None:
-            token_ids_path = activation_data_dir / "all_token_ids.pt"
-            torch.save(all_token_ids, token_ids_path)
-            saved_files.append(token_ids_path)
-            print(f"Staged token IDs at {token_ids_path}")
-        
-        if skip_upload:
-            print(f"Skipping Wandb upload as requested. Files saved locally at: {activation_data_dir}")
-            upload_successful = False  # Don't clean up when skipping upload
-        else:
-            try:
-                # Create artifact name with run name and ID for easy identification
-                run_name = wandb.run.name or "unnamed"
-                # Clean run name for artifact naming (replace invalid characters)
-                clean_run_name = run_name.replace("/", "-").replace(":", "-").replace(" ", "_")
-                artifact_name = f"evaluation_activation_data_{clean_run_name}_{run_id}"
+                print(f"  Saved {file_path.name} ({tensor_size_gb:.2f} GB)")
                 
-                # Create artifact for activation data with alias to override existing
+                # Create and upload artifact for this chunk
+                artifact_name = f"activation_data_{clean_run_name}_{run_id}_chunk_{chunk_idx:03d}_{safe_layer_name}"
                 artifact = wandb.Artifact(
                     name=artifact_name,
-                    type="activation_data",
-                    description=f"SAE activation data for run {run_name} ({run_id})"
+                    type="activation_data_chunk",
+                    description=f"SAE activation data chunk {chunk_idx}/{total_chunks} for {sae_pos}"
                 )
+                artifact.add_file(str(file_path), name=f"{safe_layer_name}.pt")
                 
-                # Try to add files individually to better handle large datasets
-                print(f"Uploading {len(saved_files)} files to Wandb...")
-                for file_path in saved_files:
-                    file_size_gb = file_path.stat().st_size / (1024**3)
-                    print(f"  Adding {file_path.name} ({file_size_gb:.2f} GB) to artifact...")
-                    artifact.add_file(str(file_path), name=f"activation_data/{file_path.name}")
+                print(f"  Uploading chunk to Wandb...")
+                wandb.log_artifact(artifact)
+                print(f"  Successfully uploaded chunk: {artifact_name}")
                 
-                # Log the artifact with "latest" alias to override previous versions
-                print("Logging artifact to Wandb...")
-                wandb.log_artifact(artifact, aliases=["latest"])
-                print(f"Successfully uploaded activation data as Wandb artifact: {artifact_name}")
-                upload_successful = True
+                # Clean up the chunk immediately after upload
+                file_path.unlink()
+                print(f"  Cleaned up local chunk file")
                 
             except Exception as e:
-                print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
-                print(f"Local files remain at: {activation_data_dir}")
-                # Don't clean up if upload failed
-    
-    finally:
-        # Only clean up if upload was successful
-        if upload_successful:
+                print(f"  ERROR: Failed to process chunk {sae_pos}: {e}")
+                # Keep the file if upload failed
+                print(f"  Keeping failed chunk at: {file_path}")
+        
+        # Upload token IDs if provided
+        if all_token_ids is not None:
+            chunk_idx += 1
+            print(f"\n[Chunk {chunk_idx}/{total_chunks}] Processing token IDs...")
+            
+            token_ids_path = activation_data_dir / "all_token_ids.pt"
             try:
-                import shutil
-                shutil.rmtree(activation_data_dir)
-                print(f"Cleaned up staging directory: {activation_data_dir}")
+                torch.save(all_token_ids, token_ids_path)
+                file_size_gb = token_ids_path.stat().st_size / (1024**3)
+                print(f"  Saved all_token_ids.pt ({file_size_gb:.2f} GB)")
+                
+                # Create and upload artifact for token IDs
+                artifact_name = f"activation_data_{clean_run_name}_{run_id}_chunk_{chunk_idx:03d}_token_ids"
+                artifact = wandb.Artifact(
+                    name=artifact_name,
+                    type="activation_data_chunk",
+                    description=f"Token IDs chunk {chunk_idx}/{total_chunks}"
+                )
+                artifact.add_file(str(token_ids_path), name="all_token_ids.pt")
+                
+                print(f"  Uploading chunk to Wandb...")
+                wandb.log_artifact(artifact)
+                print(f"  Successfully uploaded chunk: {artifact_name}")
+                
+                # Clean up
+                token_ids_path.unlink()
+                print(f"  Cleaned up local chunk file")
+                
             except Exception as e:
-                print(f"Warning: Could not clean up staging directory {activation_data_dir}: {e}")
-        else:
-            if not skip_upload:
-                print(f"Keeping local files at: {activation_data_dir} (upload was not successful)")
-            # For skip_upload case, we already printed the message above
+                print(f"  ERROR: Failed to process token IDs: {e}")
+                print(f"  Keeping failed chunk at: {token_ids_path}")
+        
+        # Clean up the staging directory if it's empty
+        try:
+            if not any(activation_data_dir.iterdir()):
+                activation_data_dir.rmdir()
+                print(f"\nCleaned up empty staging directory: {activation_data_dir}")
+            else:
+                print(f"\nSome files remain at: {activation_data_dir}")
+        except Exception as e:
+            print(f"Warning: Could not clean up directory {activation_data_dir}: {e}")
+        
+        print(f"\nChunked upload complete! Uploaded {total_chunks} chunks.")
+        
+    else:
+        # Original non-chunked upload (saves all files then uploads together)
+        print("Using traditional upload (all files at once)...")
+        _save_all_files_locally(accumulated_data, all_token_ids, activation_data_dir, output_path)
+        
+        try:
+            # Create single artifact for all data
+            artifact_name = f"evaluation_activation_data_{clean_run_name}_{run_id}"
+            artifact = wandb.Artifact(
+                name=artifact_name,
+                type="activation_data",
+                description=f"SAE activation data for run {run_name} ({run_id})"
+            )
+            
+            # Add all files
+            print(f"Uploading all files to Wandb...")
+            for file_path in activation_data_dir.glob("*.pt"):
+                file_size_gb = file_path.stat().st_size / (1024**3)
+                print(f"  Adding {file_path.name} ({file_size_gb:.2f} GB) to artifact...")
+                artifact.add_file(str(file_path), name=f"activation_data/{file_path.name}")
+            
+            # Log the artifact
+            print("Logging artifact to Wandb...")
+            wandb.log_artifact(artifact, aliases=["latest"])
+            print(f"Successfully uploaded activation data as Wandb artifact: {artifact_name}")
+            
+            # Clean up all files
+            shutil.rmtree(activation_data_dir)
+            print(f"Cleaned up staging directory: {activation_data_dir}")
+            
+        except Exception as e:
+            print(f"Warning: Failed to upload activation data artifact to Wandb: {e}")
+            print(f"Local files remain at: {activation_data_dir}")
+
+
+def _save_all_files_locally(accumulated_data, all_token_ids, activation_data_dir, output_path):
+    """Helper function to save all files locally."""
+    import shutil
+    
+    for sae_pos, data in accumulated_data.items():
+        safe_layer_name = sae_pos.replace(".", "--").replace("/", "--")
+        file_path = activation_data_dir / f"{safe_layer_name}.pt"
+        
+        # Make tensors contiguous before saving
+        contiguous_data = {}
+        for key, value in data.items():
+            if isinstance(value, torch.Tensor):
+                contiguous_data[key] = value.contiguous()
+            else:
+                contiguous_data[key] = value
+        
+        # Check disk space before each save
+        stat = shutil.disk_usage(str(output_path))
+        available_gb = stat.free / (1024**3)
+        
+        # Estimate size for this specific tensor
+        tensor_size_gb = sum(
+            v.numel() * v.element_size() / (1024**3) 
+            for v in contiguous_data.values() 
+            if isinstance(v, torch.Tensor)
+        )
+        
+        if available_gb < tensor_size_gb * 1.2:
+            raise RuntimeError(f"Insufficient disk space for {sae_pos}. Need ~{tensor_size_gb:.2f} GB, have {available_gb:.2f} GB")
+        
+        torch.save(contiguous_data, file_path)
+        print(f"Staged activation data for {sae_pos} at {file_path} ({tensor_size_gb:.2f} GB)")
+    
+    # Save token IDs if provided
+    if all_token_ids is not None:
+        token_ids_path = activation_data_dir / "all_token_ids.pt"
+        torch.save(all_token_ids, token_ids_path)
+        file_size_gb = token_ids_path.stat().st_size / (1024**3)
+        print(f"Staged token IDs at {token_ids_path} ({file_size_gb:.2f} GB)")
 
 
 def save_metrics_to_wandb(
