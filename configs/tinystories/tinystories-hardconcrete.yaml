@@ -1,5 +1,5 @@
 # Experiment Settings
-wandb_project: tinystories-1m-hardconcrete
+wandb_project: tinystories-1m
 wandb_run_name: null
 wandb_tags: ["hardconcrete"]
 seed: 42
@@ -24,7 +24,7 @@ data:
   dataset_name: "apollo-research/Skylion007-openwebtext-tokenizer-gpt2"
   tokenizer_name: "roneneldan/TinyStories"
   context_length: 1024
-  n_train_samples: 200_000
+  n_train_samples: 400_000
   n_eval_samples: 500
   train_batch_size: 20
   eval_batch_size: 20
@@ -50,4 +50,4 @@ saes:
   hard_concrete_stretch_limits: [-0.1, 1.1]
   tied_encoder_init: true
   apply_relu_to_magnitude: true
-  coefficient_threshold: 0.5
+  coefficient_threshold: 0.0

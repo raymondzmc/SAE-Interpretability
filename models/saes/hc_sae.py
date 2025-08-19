@@ -15,7 +15,7 @@ class HardConcreteSAEConfig(SAEConfig):
     hard_concrete_stretch_limits: tuple[float, float] = Field((-0.1, 1.1), description="Hard concrete stretch limits")
     tied_encoder_init: bool = Field(True, description="Whether to tie the encoder weights to the decoder weights")
     apply_relu_to_magnitude: bool = Field(True, description="Whether to apply ReLU to the magnitude")
-    coefficient_threshold: float = Field(0.5, description="Threshold for the coefficients during inference")
+    coefficient_threshold: float = Field(0.0, description="Threshold for the coefficients during inference")
     
     @model_validator(mode="before")
     @classmethod
@@ -105,7 +105,7 @@ class HardConcreteSAE(BaseSAE):
         init_decoder_orthogonal: bool = True,
         tied_encoder_init: bool = True,
         apply_relu_to_magnitude: bool = True,
-        coefficient_threshold: float = 0.5,
+        coefficient_threshold: float = 0.0,
     ):
         """Initialize the SAE with Hard Concrete gates.
 
@@ -184,17 +184,17 @@ class HardConcreteSAE(BaseSAE):
         gate_logits = encoder_out + self.gate_bias
         current_beta = self.beta.item() # Get current beta value from buffer
         z = hard_concrete(gate_logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
+        
+        # Apply threshold to z during evaluation
+        if not self.training:
+            z = torch.where(torch.abs(z) >= self.coefficient_threshold, z, 0.0)
 
         magnitude = self.magnitude_scale.exp() * encoder_out + self.magnitude_bias
         if self.apply_relu_to_magnitude:
             magnitude = F.relu(magnitude)
-    
+
         # Combine gate and magnitude for final coefficients
         coefficients = z * magnitude
-        
-        # Apply threshold during evaluation
-        if not self.training:
-            coefficients = torch.where(torch.abs(coefficients) >= self.coefficient_threshold, coefficients, 0.0)
 
         # Reconstruct using the dictionary elements and final coefficients
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder.bias)
