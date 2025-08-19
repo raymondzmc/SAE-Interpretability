@@ -496,16 +496,14 @@ def main():
     
     parser.add_argument("--generate_explanations", action="store_true", default=False,
                        help="Generate neuron explanations (default: False)")
-    
+
     parser.add_argument("--force_recompute", action="store_true", default=False,
                        help="Force recomputation of metrics even if existing ones are found (default: False)")
 
     # For debugging
     parser.add_argument("--override_n_train_samples", type=int, default=None,
                        help="Override n_train_samples to avoid slow data skipping (default: None - use config value)")
-    parser.add_argument("--hard_concrete_method", type=str, default="c", choices=["c", "z"],
-                       help="Method to use for Hard Concrete SAE (default: c)")
-    
+
     args = parser.parse_args()
     
     # Run the evaluation with parsed arguments
