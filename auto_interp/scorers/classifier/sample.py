@@ -1,142 +1,119 @@
+import torch
 import random
 from dataclasses import dataclass
-from typing import List, NamedTuple
-
-import torch
-from transformers import PreTrainedTokenizer
-
-from ...explainers.features import Example
-from utils.logging import logger
-
-L = "<<"
-R = ">>"
-DEFAULT_MESSAGE = (
-    "<<NNsight>> is the best library for <<interpretability>> on huge models!"
-)
+from typing import List, Callable
+from auto_interp.explainers.features import Example
 
 
 @dataclass
-class ClassifierOutput:
+class Sample:
     text: str
-    """Text"""
-
-    distance: float | int
-    """Quantile or neighbor distance"""
-
-    ground_truth: bool
-    """Whether the example is correct or not"""
-
-    prediction: bool = False
-    """Whether the model predicted the example correctly"""
-
-    highlighted: bool = False
-    """Whether the sample is highlighted"""
+    clean: str
+    label: int
+    activations: list[float]
 
 
-class Sample(NamedTuple):
-    text: str
+def _highlight(tokens: list[str], condition: Callable[[int], bool]) -> str:
+    highlighted_tokens = []
+    i = 0
+    while i < len(tokens):
+        if condition(i):
+            highlighted_tokens.append("<<")
+            while i < len(tokens) and condition(i):
+                highlighted_tokens.append(tokens[i])
+                i += 1
 
-    data: ClassifierOutput
+            highlighted_tokens.append(">>")
+        else:
+            highlighted_tokens.append(tokens[i])
+            i += 1
+    return "".join(highlighted_tokens)
 
-
-def examples_to_samples(
-    examples: list[Example],
-    tokenizer: PreTrainedTokenizer,
-    n_incorrect: int = 0,
-    threshold: float = 0.3,
-    highlighted: bool = False,
-    **sample_kwargs,
-) -> list[Sample]:
-    samples = []
-
-    for example in examples:
-        text,clean = _prepare_text(example, tokenizer, n_incorrect, threshold, highlighted)
-
-        samples.append(
-            Sample(
-                text=text,
-                data=ClassifierOutput(
-                    text=clean, highlighted=highlighted, **sample_kwargs
-                ),
-            )
-        )
-
-    return samples
-
-
-# NOTE: Should reorganize below, it's a little confusing
 
 def _prepare_text(
     example: Example,
-    tokenizer: PreTrainedTokenizer,
-    n_incorrect: int,
-    threshold: float,
-    highlighted: bool,
-):
-    # Handle tokens that are already strings
-    if hasattr(tokenizer, 'is_mock') and tokenizer.is_mock:
-        # Tokens are already strings, just use them directly
-        str_toks = example.tokens
-    else:
-        # Normal case: decode tokens
-        str_toks = tokenizer.batch_decode(example.tokens)
+    n_incorrect: int = 0,
+    threshold: float = 0.0,
+    highlighted: bool = False,
+) -> tuple[str, str]:
+    """
+    Prepare text from an example, optionally highlighting activated tokens.
     
-    clean = "".join(str_toks)
+    Args:
+        example: Example object with tokens and activations
+        n_incorrect: Number of incorrect tokens to add (for fuzzing)
+        threshold: Threshold for highlighting tokens (as fraction of max activation)
+        highlighted: Whether to highlight tokens
     
-    # Just return text if there's no highlighting
-    if not highlighted:
-        return clean, clean
+    Returns:
+        Tuple of (highlighted_text, clean_text)
+    """
+    # Tokens are already strings
+    tokens = example.tokens
     
-    # Normalize threshold by max activation
-    threshold = threshold * example.max_activation
+    assert len(tokens) == len(example.activations), "Number of tokens and activation values must match"
     
-    # Handle both tensor and list activations
-    if isinstance(example.activations, torch.Tensor):
-        activations = example.activations
-    else:
-        activations = torch.tensor(example.activations)
-    
-    # Highlight tokens with activations above threshold if correct example
-    if n_incorrect == 0:
-        def check(i):
-            return activations[i] >= threshold
-        return _highlight(str_toks, check), clean
-    
-    # Highlight n_incorrect tokens with activations below threshold if incorrect example
-    below_threshold = torch.nonzero(activations <= threshold).squeeze()
-    
-    # Rare case where there are no tokens below threshold
-    if below_threshold.dim() == 0:
-        logger.error("Failed to prepare example.")
-        return DEFAULT_MESSAGE, clean
-    
-    random.seed(22)
-    
-    n_incorrect = min(n_incorrect, len(below_threshold))
-    
-    random_indices = set(random.sample(below_threshold.tolist(), n_incorrect))
-    
-    def check(i):
-        return i in random_indices
-    
-    return _highlight(str_toks, check), clean
+    if highlighted:
+        activation_threshold = threshold * example.max_activation
+        highlighted_tokens = []
 
-
-def _highlight(tokens, check):
-    result = []
-
-    i = 0
-    while i < len(tokens):
-        if check(i):
-            result.append(L)
-
-            while i < len(tokens) and check(i):
-                result.append(tokens[i])
-                i += 1
-
-            result.append(R)
+        # If no incorrect tokens are needed, highlight consecutive tokens with activations above threshold
+        if n_incorrect == 0:
+            highlighted_tokens = _highlight(tokens, lambda i: example.activations[i] > activation_threshold)
         else:
-            result.append(tokens[i])
-            i += 1
+            below_threshold = torch.nonzero(example.activations <= activation_threshold).squeeze()
+            n_incorrect = min(n_incorrect, len(below_threshold))
+            random_indices = set(random.sample(below_threshold.tolist(), n_incorrect))
+            highlighted_tokens = _highlight(tokens, lambda i: i in random_indices)
 
-    return "".join(result)
+        highlighted_text = "".join(highlighted_tokens)
+        clean_text = "".join(tokens)
+        return highlighted_text, clean_text
+    else:
+        text = "".join(tokens)
+        return text, text
+
+
+def examples_to_samples(
+    examples: List[Example],
+    label: int,
+    highlighted: bool = False,
+    n_incorrect: int = 0,
+    threshold: float = 0,
+) -> List[Sample]:
+    """
+    Convert a list of Example objects to Sample objects.
+    
+    Args:
+        examples: List of Example objects
+        label: Label for all samples (1 for positive, 0 for negative)
+        highlighted: Whether to highlight tokens based on activations
+        n_incorrect: Number of incorrect tokens to add (for fuzzing)
+        threshold: Threshold for highlighting tokens
+    
+    Returns:
+        List of Sample objects
+    """
+    samples = []
+    
+    for example in examples:
+        if highlighted:
+            text, clean = _prepare_text(example, n_incorrect, threshold, highlighted)
+        else:
+            # Tokens are already strings, just join them
+            text = "".join(example.tokens)
+            clean = text
+        
+        if isinstance(example.activations, torch.Tensor):
+            activations = example.activations.tolist()
+        else:
+            activations = example.activations
+            
+        samples.append(Sample(
+            text=text,
+            clean=clean,
+            label=label,
+            activations=activations
+        ))
+    
+    return samples

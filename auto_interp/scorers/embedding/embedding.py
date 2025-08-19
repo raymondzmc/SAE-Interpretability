@@ -1,20 +1,13 @@
-import asyncio
-import json
-import random
-import re
-import time
-from abc import abstractmethod
-from dataclasses import dataclass, field
-from typing import List, NamedTuple
-
-import numpy as np
 import torch
+import random
+import asyncio
+from typing import NamedTuple
+from dataclasses import dataclass
 from sentence_transformers import SentenceTransformer
 from transformers import PreTrainedTokenizer
-from ...clients import Client
-from ...explainers.features import Example, FeatureRecord
-from ...explainers.explainer import ExplainerResult
-from ..scorer import Scorer, ScorerResult
+from auto_interp.explainers.features import Example
+from auto_interp.explainers.explainer import ExplainerResult
+from auto_interp.scorers.scorer import Scorer, ScorerResult
 
 
 @dataclass
@@ -40,13 +33,14 @@ class EmbeddingScorer(Scorer):
 
     def __init__(
         self,
-        model,
-        tokenizer,
-        verbose: bool,
-        batch_size: int,
+        model_name_or_path: str = "dunzhang/stella_en_400M_v5",
+        tokenizer: PreTrainedTokenizer | None = None,
+        verbose: bool = False,
+        batch_size: int = 10,
         **generation_kwargs,
     ):
-        self.model = model
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = SentenceTransformer(model_name_or_path, trust_remote_code=True, device=device)
         self.verbose = verbose
         self.tokenizer = tokenizer
         self.batch_size = batch_size
@@ -128,17 +122,14 @@ class EmbeddingScorer(Scorer):
 
 def examples_to_samples(
     examples: list[Example],
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: PreTrainedTokenizer | None = None,
     **sample_kwargs,
 ) -> list[Sample]:
-    samples = []    
+    samples = []
     for example in examples:
-        # Handle tokens that are already strings
-        if hasattr(tokenizer, 'is_mock') and tokenizer.is_mock:
-            # Tokens are already strings, just join them
+        if tokenizer is None:
             text = "".join(example.tokens)
         else:
-            # Normal case: decode tokens
             text = "".join(tokenizer.batch_decode(example.tokens))
         
         # Handle both tensor and list activations

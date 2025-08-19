@@ -1,13 +1,17 @@
 from typing import List
-
-from transformers import PreTrainedTokenizer
+from pydantic import BaseModel, Field
 
 from auto_interp.clients import Client
-from auto_interp.explainers.features import FeatureRecord
 from auto_interp.explainers.explainer import ExplainerResult
 from auto_interp.scorers.classifier.classifier import Classifier
-from auto_interp.scorers.classifier.prompts.detection_prompt import prompt
+from auto_interp.scorers.classifier.prompts.detection_prompt import detection_prompt
 from auto_interp.scorers.classifier.sample import Sample, examples_to_samples
+
+
+class ClassificationOutput(BaseModel):
+    predictions: List[int] = Field(
+        description="List of 1s and 0s indicating classification results for each example"
+    )
 
 
 class DetectionScorer(Classifier):
@@ -16,48 +20,68 @@ class DetectionScorer(Classifier):
     def __init__(
         self,
         client: Client,
-        tokenizer: PreTrainedTokenizer,
         verbose: bool = False,
         batch_size: int = 10,
         log_prob: bool = False,
+        use_structured_output: bool = True,
         **generation_kwargs,
     ):
         super().__init__(
             client=client,
-            tokenizer=tokenizer,
             verbose=verbose,
             batch_size=batch_size,
             log_prob=log_prob,
+            use_structured_output=use_structured_output,
             **generation_kwargs,
         )
+        self.prompt = detection_prompt  # Store the prompt function
 
-        self.prompt = prompt
-
-    def _prepare(self, result: ExplainerResult) -> list[list[Sample]]:
+    def _prepare(self, result: ExplainerResult) -> List[Sample]:
         """
-        Prepare and shuffle a list of samples for classification.
+        Prepare samples for detection scoring.
+        
+        Args:
+            result: ExplainerResult containing the feature record and explanation
+        
+        Returns:
+            List of Sample objects ready for classification
         """
-        # Extract the FeatureRecord from ExplainerResult
         record = result.record
-
-        # Negative examples (contrastive)
-        samples = examples_to_samples(
-            record.negative_examples,  # Updated from record.random_examples
-            distance=-1,
-            ground_truth=False,
-            tokenizer=self.tokenizer,
+        
+        # Convert positive examples to samples with label 1
+        positive_samples = examples_to_samples(
+            examples=record.positive_examples,
+            label=1,
+            highlighted=False,
         )
-
-        # Positive examples 
-        # Note: positive_examples is a simple list, not list of lists
-        if record.positive_examples:
-            samples.extend(
-                examples_to_samples(
-                    record.positive_examples,
-                    distance=1,
-                    ground_truth=True,
-                    tokenizer=self.tokenizer,
-                )
-            )
-
+        
+        # Convert negative examples to samples with label 0
+        negative_samples = examples_to_samples(
+            examples=record.negative_examples,
+            label=0,
+            highlighted=False,
+        )
+        
+        # Combine all samples
+        samples = positive_samples + negative_samples
+        
         return samples
+
+    def _build_prompt(self, explanation: str, batch: List[Sample]) -> List[dict]:
+        """
+        Build the full prompt messages for detection scoring.
+        
+        Args:
+            explanation: The explanation to evaluate
+            batch: List of samples to classify
+        
+        Returns:
+            List of message dictionaries for the API
+        """
+        # Format examples text
+        examples = self._format_examples(batch)
+        
+        # Call the prompt function to get the full message list
+        messages = self.prompt(examples=examples, explanation=explanation)
+        
+        return messages

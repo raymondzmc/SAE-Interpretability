@@ -61,9 +61,7 @@ def stratified_sample_by_max_activation(
     max_activations_per_example = neuron_activations.max(dim=1).values  # (n_examples,)
     
     # Get sorted indices (descending order)
-    sorted_indices = torch.argsort(max_activations_per_example, descending=True)
-    sorted_activations = max_activations_per_example[sorted_indices]
-    
+    sorted_indices = torch.argsort(max_activations_per_example, descending=True)    
     n_examples = len(sorted_indices)
     
     # Handle edge cases

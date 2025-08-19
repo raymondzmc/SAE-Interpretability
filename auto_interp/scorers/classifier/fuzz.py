@@ -2,16 +2,14 @@ from math import ceil
 from typing import List
 
 import torch
-from transformers import PreTrainedTokenizer
 
-from ...clients import Client
-from ...explainers.features import FeatureRecord
-from ...explainers.explainer import ExplainerResult
-from ..scorer import Scorer
-from .classifier import Classifier
-from .prompts.fuzz_prompt import prompt
-from .sample import Sample, examples_to_samples
-
+from auto_interp.clients import Client
+from auto_interp.explainers.explainer import ExplainerResult
+from auto_interp.explainers.features import Example
+from auto_interp.scorers.scorer import Scorer
+from auto_interp.scorers.classifier.classifier import Classifier
+from auto_interp.scorers.classifier.prompts.fuzz_prompt import fuzz_prompt as prompt
+from auto_interp.scorers.classifier.sample import Sample, examples_to_samples
 
 class FuzzingScorer(Classifier, Scorer):
     name = "fuzz"
@@ -19,81 +17,80 @@ class FuzzingScorer(Classifier, Scorer):
     def __init__(
         self,
         client: Client,
-        tokenizer: PreTrainedTokenizer,
         verbose: bool = False,
         batch_size: int = 1,
         threshold: float = 0.3,
         log_prob: bool = False,
+        use_structured_output: bool = True,
         **generation_kwargs,
     ):
         super().__init__(
             client=client,
-            tokenizer=tokenizer,
             verbose=verbose,
             batch_size=batch_size,
             log_prob=log_prob,
+            use_structured_output=use_structured_output,
             **generation_kwargs,
         )
-
         self.threshold = threshold
         self.prompt = prompt
+    
+    def average_n_activations(self, examples: list[Example], threshold: float) -> float:
+        avg = sum(
+            len(torch.nonzero(example.activations > (threshold * example.max_activation))) for example in examples
+        ) / len(examples)
 
-    def average_n_activations(self, examples) -> float:
-        """Calculate average number of non-zero activations across examples."""
-        if not examples:
-            return 0
-        
-        total_nonzero = 0
-        for example in examples:
-            # Handle both tensor and list activations
-            if isinstance(example.activations, torch.Tensor):
-                nonzero_count = len(torch.nonzero(example.activations))
-            else:
-                # For lists, count non-zero values
-                nonzero_count = sum(1 for a in example.activations if a != 0)
-            total_nonzero += nonzero_count
-        
-        avg = total_nonzero / len(examples)
         return ceil(avg)
 
-    def _prepare(self, result: ExplainerResult) -> list[list[Sample]]:
+    def _prepare(self, result: ExplainerResult) -> List[Sample]:
         """
-        Prepare and shuffle a list of samples for classification.
+        Prepare samples for fuzzing scoring.
+        
+        The fuzzing test checks if the model can identify correctly vs incorrectly
+        highlighted tokens. We create:
+        - Positive examples with correct highlights (should return 1)
+        - Negative examples with random/incorrect highlights (should return 0)
+        
+        Args:
+            result: ExplainerResult containing the feature record and explanation
+        
+        Returns:
+            List of Sample objects ready for classification
         """
-        # Extract the FeatureRecord from ExplainerResult
         record = result.record
-        
-        defaults = {
-            "highlighted": True,
-            "tokenizer": self.tokenizer,
-        }
-        
-        # Calculate average number of activations from positive examples
-        n_incorrect = 0
-        if record.positive_examples:
-            n_incorrect = self.average_n_activations(record.positive_examples)
-        
-        # Negative examples
-        samples = examples_to_samples(
-            record.negative_examples,  # Updated from record.extra_examples
-            distance=-1,
-            ground_truth=False,
+        n_incorrect = self.average_n_activations(record.positive_examples, self.threshold)
+        negative_samples = examples_to_samples(
+            record.negative_examples,
+            label=0,
+            highlighted=True,
             n_incorrect=n_incorrect,
-            **defaults,
+            threshold=self.threshold,
+        )
+        positive_samples = examples_to_samples(
+            examples=record.positive_examples,
+            label=1,
+            highlighted=True,
+            n_incorrect=0,
+            threshold=self.threshold,
         )
 
-        # Positive examples
-        if record.positive_examples:
-            samples.extend(
-                examples_to_samples(
-                    record.positive_examples,
-                    distance=1,
-                    ground_truth=True,
-                    n_incorrect=0,
-                    **defaults,
-                )
-            )
-        else:
-            raise ValueError("No positive examples found for fuzzing scorer")
-
+        samples = positive_samples + negative_samples
         return samples
+
+    def _build_prompt(self, explanation: str, batch: List[Sample]) -> List[dict]:
+        """
+        Build the full prompt messages for fuzzing scoring.
+        
+        Args:
+            explanation: The explanation to evaluate
+            batch: List of samples to classify
+        
+        Returns:
+            List of message dictionaries for the API
+        """
+        # Format examples text
+        examples = self._format_examples(batch)
+        
+        # Call the prompt function to get the full message list
+        messages = self.prompt(examples=examples, explanation=explanation)
+        return messages

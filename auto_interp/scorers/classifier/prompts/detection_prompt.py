@@ -66,7 +66,7 @@ default = [
 ]
 
 
-def prompt(examples, explanation):
+def detection_prompt(examples, explanation):
     generation_prompt = GENERATION_PROMPT.format(
         explanation=explanation, examples=examples
     )

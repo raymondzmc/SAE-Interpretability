@@ -1,183 +1,246 @@
-import asyncio
 import json
 import random
 import re
-from abc import abstractmethod
-
 import numpy as np
-from transformers import PreTrainedTokenizer
+from abc import abstractmethod
+from typing import List
 
-from auto_interp.clients import Client
-from auto_interp.explainers.features import FeatureRecord
+from pydantic import BaseModel, Field
+
+from auto_interp.clients import Client, LogProb
 from auto_interp.explainers.explainer import ExplainerResult
-from utils.logging import logger
+from auto_interp.scorers.classifier.sample import Sample
 from auto_interp.scorers.scorer import Scorer, ScorerResult
-from auto_interp.scorers.classifier.sample import ClassifierOutput, Sample
+from utils.logging import logger
+
+
+class ClassificationOutput(BaseModel):
+    """Structured output model for classification results."""
+    predictions: List[int] = Field(
+        description="List of 1s and 0s indicating classification results for each example"
+    )
 
 
 class Classifier(Scorer):
+    """Base class for classification-based scorers."""
+    
     def __init__(
         self,
         client: Client,
-        tokenizer: PreTrainedTokenizer,
-        verbose: bool,
-        batch_size: int,
-        log_prob: bool,
+        verbose: bool = False,
+        batch_size: int = 10,
+        log_prob: bool = False,
+        use_structured_output: bool = True,
         **generation_kwargs,
     ):
-        self.client = client
-        self.tokenizer = tokenizer
-        self.verbose = verbose
-
-        self.batch_size = batch_size
-        self.generation_kwargs = generation_kwargs
-        self.log_prob = log_prob
-
-
-
-    async def __call__(
-        self,
-        record: ExplainerResult,
-    ) -> list[ClassifierOutput]:
-        samples = self._prepare(record)
-
-        random.shuffle(samples)
-        samples = self._batch(samples)
-        results = await self._query(
-            record.explanation,
-            samples,
-        )
+        """
+        Initialize the classifier.
         
-        return ScorerResult(record=record.record, score=results)
+        Args:
+            client: Client for generating predictions
+            verbose: Whether to print verbose output
+            batch_size: Number of samples to process at once
+            log_prob: Whether to use log probabilities for scoring
+            use_structured_output: Whether to use structured output (Pydantic model)
+            **generation_kwargs: Additional generation parameters
+        """
+        self.client = client
+        self.verbose = verbose
+        self.batch_size = batch_size
+        self.log_prob = log_prob
+        self.use_structured_output = use_structured_output
+        self.generation_kwargs = generation_kwargs
 
     @abstractmethod
-    def _prepare(self, record: ExplainerResult) -> list[list[Sample]]:
-        pass
+    def _prepare(self, result: ExplainerResult) -> List[Sample]:
+        """Prepare samples from the explainer result."""
+        raise NotImplementedError
 
-    async def _query(
-        self,
-        explanation: str,
-        batches: list[list[Sample]],
-    ) -> list[Sample]:
+    @abstractmethod
+    def _build_prompt(self, explanation: str, batch: List[Sample]) -> List[dict]:
         """
-        Send and gather batches of samples to the model.
+        Build the full prompt messages for the classifier.
+        
+        Args:
+            explanation: The explanation to evaluate
+            batch: List of samples to classify
+            
+        Returns:
+            List of message dictionaries for the API
         """
-        sem = asyncio.Semaphore(1)
+        raise NotImplementedError
 
-        async def _process(explanation, batch):
-            async with sem:
-                result = await self._generate(explanation, batch)
-                return result
-    
-        tasks = [asyncio.create_task(_process(explanation, batch)) for batch in batches]
-        results = await asyncio.gather(*tasks)
-
-        return sum(results, [])
-    
-
-    async def _generate(
-        self, explanation: str, batch: list[Sample]
-    ) -> list[ClassifierOutput]:
+    async def __call__(self, result: ExplainerResult) -> ScorerResult:
         """
-        Generate predictions for a batch of samples.
+        Score the explanation using classification.
+        
+        Args:
+            result: ExplainerResult containing the explanation and examples
+        
+        Returns:
+            ScorerResult with accuracy score
         """
-
-        prompt = self._build_prompt(explanation, batch)
-        if self.log_prob:
-            self.generation_kwargs["logprobs"] = True
-            self.generation_kwargs["top_logprobs"] = 5
-        response = await self.client.generate(prompt, **self.generation_kwargs)
-        if response is None:
-            array = [-1] * self.batch_size
-            probabilities = [-1] * self.batch_size
-        else:
-            selections = response.text
-            logprobs = response.logprobs if self.log_prob else None
-            try:
-                array, probabilities = self._parse(selections, logprobs)
-            except Exception as e:
-                logger.error(f"Parsing selections failed: {e}")
-                array = [-1] * self.batch_size
-                probabilities = [-1] * self.batch_size
-
-        results = []
-        correct = []
-        response = []
-        for i, sample in enumerate(batch):
-            result = sample.data
-            prediction = array[i] 
-            result.prediction = prediction
-            result.correct = prediction == result.ground_truth
-            correct.append(result.ground_truth)
-            response.append(prediction)
-            if self.log_prob:
-                result.probability = probabilities[i]
-            results.append(result)
-
+        # Prepare samples
+        samples = self._prepare(result)
+        
+        if not samples:
+            logger.warning("No samples to classify")
+            return ScorerResult(record=result.record, score=0.0)
+        
+        # Shuffle samples for better mixing of positive/negative
+        random.shuffle(samples)
+        
+        # Process in batches
+        all_predictions = []
+        all_labels = []
+        
+        for i in range(0, len(samples), self.batch_size):
+            batch = samples[i:i + self.batch_size]
+            
+            # Build the full prompt messages
+            messages = self._build_prompt(result.explanation, batch)
+            
+            # Generate predictions
+            if self.use_structured_output:
+                response = await self.client.generate(
+                    messages=messages,
+                    response_model=ClassificationOutput,
+                    **self.generation_kwargs
+                )
+                
+                if response.structured_response:
+                    predictions = response.structured_response.predictions
+                    # Convert to float for consistency
+                    predictions = [float(p) for p in predictions]
+                else:
+                    # Fallback to parsing text response
+                    predictions = self._parse_predictions(response.text, len(batch))
+                
+                # If we also want logprobs for confidence scoring
+                if self.log_prob and response.logprobs:
+                    # We can use logprobs to get confidence scores
+                    confidences = self._extract_probabilities_from_logprobs(response.logprobs)
+                    # Optionally combine structured predictions with confidence scores
+                    # For now, just use the structured predictions
+            else:
+                response = await self.client.generate(
+                    messages=messages,
+                    **self.generation_kwargs
+                )
+                
+                if self.log_prob and response.logprobs:
+                    # Extract probabilities from logprobs
+                    predictions = self._extract_probabilities_from_logprobs(response.logprobs)
+                else:
+                    # Parse text predictions
+                    predictions = self._parse_predictions(response.text, len(batch))
+            
+            # Ensure we have the right number of predictions
+            if len(predictions) < len(batch):
+                # Pad with uncertain predictions
+                predictions.extend([0.5] * (len(batch) - len(predictions)))
+            elif len(predictions) > len(batch):
+                # Truncate to batch size
+                predictions = predictions[:len(batch)]
+            
+            # Collect predictions and labels
+            all_predictions.extend(predictions)
+            all_labels.extend([s.label for s in batch])
+            
             if self.verbose:
-                result.text = sample.text
-        return results
+                for sample, pred in zip(batch, predictions):
+                    correct = "✓" if (pred > 0.5 and sample.label == 1) or (pred <= 0.5 and sample.label == 0) else "✗"
+                    print(f"  {correct} Predicted: {pred:.2f}, Actual: {sample.label}, Text: {sample.text[:50]}...")
+        
+        # Calculate accuracy
+        correct = sum(
+            1 for pred, label in zip(all_predictions, all_labels)
+            if (pred > 0.5 and label == 1) or (pred <= 0.5 and label == 0)
+        )
+        accuracy = correct / len(all_labels) if all_labels else 0.0
+        
+        if self.verbose:
+            print(f"Accuracy: {accuracy:.3f} ({correct}/{len(all_labels)})")
+        
+        return ScorerResult(record=result.record, score=accuracy)
 
-    def _parse(self, string, logprobs=None):
-        pattern = r"\[.*?\]"
-        match = re.search(pattern, string)
+    def _format_examples(self, samples: List[Sample]) -> str:
+        """Format samples into text for the prompt."""
+        examples = []
+        for i, sample in enumerate(samples):
+            examples.append(f"Example {i}: {sample.text}")
+        return "\n".join(examples)
 
-        try:
-            array = json.loads(match.group(0))
-            assert len(array) == self.batch_size
-            if self.log_prob:
-                probabilities = self._parse_logprobs(logprobs)
-                assert len(probabilities) == self.batch_size
-                return array, probabilities
-            probabilities = None
-            return array, probabilities
-        except (json.JSONDecodeError, AssertionError, AttributeError) as e:
-            logger.error(f"Parsing array failed: {e}")
-            if self.log_prob:
-                return [-1] * self.batch_size, [-1] * self.batch_size
-            return [-1] * self.batch_size
+    def _parse_predictions(self, text: str, expected_count: int) -> List[float]:
+        """
+        Parse predictions from text response.
+        
+        Args:
+            text: Response text containing predictions
+            expected_count: Expected number of predictions
+        
+        Returns:
+            List of prediction probabilities (0.0 or 1.0)
+        """
+        # Try to extract list format first [1, 0, 1, ...]
+        list_match = re.search(r'\[([^\]]+)\]', text)
+        if list_match:
+            try:
+                values = json.loads(f"[{list_match.group(1)}]")
+                if len(values) == expected_count:
+                    return [float(v) for v in values]
+            except:
+                pass
+        
+        # Try to extract individual numbers
+        numbers = re.findall(r'\b[01]\b', text)
+        if len(numbers) == expected_count:
+            return [float(n) for n in numbers]
+        
+        # Fallback: return 0.5 for all (uncertain)
+        logger.warning(f"Could not parse predictions from response: {text[:100]}...")
+        return [0.5] * expected_count
 
-    def _parse_logprobs(self, logprobs):
-        #Logprobs will be a list of 5 probabilites for each token in the response
-        # The response will be in the form of [x, x, x, ...] for each position we
-        # need to get the probability of 1 or 0 
+    def _extract_probabilities_from_logprobs(self, logprobs: List[LogProb]) -> List[float]:
+        """
+        Extract classification probabilities from logprobs.
+        
+        This method analyzes the log probabilities of tokens to determine
+        the probability of positive classification (1) vs negative (0).
+        
+        Args:
+            logprobs: List of LogProb objects from the response
+        
+        Returns:
+            List of probabilities for positive classification
+        """
         probabilities = []
         
-        for i in range(len(logprobs)):
-            if "1" in logprobs[i].token or "0" in logprobs[i].token:
-                top_logprobs = logprobs[i].top_logprobs
-                prob_0 = 0
-                prob_1 = 0
-                for i in range(len(top_logprobs)):
-                    token = top_logprobs[i].token
-                    logprob = top_logprobs[i].logprob
-                    if "0" in token:
-                        prob_0 += np.exp(logprob).item()
-                    elif "1" in token:
-                        prob_1 += np.exp(logprob).item()
-                if prob_0+prob_1>0:
-                    probabilities.append(prob_1/(prob_0+prob_1))
-                else:
-                    probabilities.append(0)
-        return probabilities
-
-    def _build_prompt(
-        self,
-        explanation: str,
-        batch: list[Sample],
-    ) -> str:
-        """
-        Prepare prompt for generation.
-        """
-
-        examples = "\n".join(
-            f"Example {i}: {sample.text}" for i, sample in enumerate(batch)
-        )
+        for logprob in logprobs:
+            # Get the token that was actually generated
+            token = logprob.token.strip()
+            
+            # Calculate P(1|context) by looking at alternatives
+            p_positive = 0.0
+            p_negative = 0.0
+            
+            for alt in logprob.top_logprobs:
+                alt_token = alt.token.strip()
+                prob = np.exp(alt.logprob)
+                
+                if alt_token == "1":
+                    p_positive += prob
+                elif alt_token == "0":
+                    p_negative += prob
+            
+            # Normalize to get probability of positive class
+            total = p_positive + p_negative
+            if total > 0:
+                prob_positive = p_positive / total
+            else:
+                # If we couldn't determine from logprobs, use the actual token
+                prob_positive = 1.0 if token == "1" else 0.0
+            
+            probabilities.append(prob_positive)
         
-        return self.prompt(explanation=explanation, examples=examples)
-
-    def _batch(self, samples):
-        return [
-            samples[i : i + self.batch_size]
-            for i in range(0, len(samples), self.batch_size)
-        ]
+        return probabilities

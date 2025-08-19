@@ -19,7 +19,6 @@ class Example:
     tokens: list[str]
     activations: torch.Tensor
     normalized_activations: Optional[torch.Tensor] = None
-    str_toks: Optional[list[str]] = None
     
     @property
     def max_activation(self):
@@ -29,10 +28,7 @@ class Example:
         Returns:
             float: The maximum activation value.
         """
-        if isinstance(self.activations, torch.Tensor):
-            return self.activations.max().item()
-        else:
-            return max(self.activations) if self.activations else 0.0
+        return self.activations.max().item()
 
 
 @dataclass
@@ -160,11 +156,9 @@ class FeatureRecord:
         if len(neuron_data_indices) < min_examples_required:
             return None
             
-        # Create the feature record
         record = cls(feature=feature)
         
-        # Calculate max activation for this neuron
-        record.max_activation = neuron_activations.max().item() if len(neuron_activations) > 0 else 0.0
+        record.max_activation = neuron_activations.max().item()
         
         # Helper function to create Example objects
         def create_example(data_idx: int, activations: torch.Tensor) -> Example:
@@ -191,26 +185,19 @@ class FeatureRecord:
                 
                 tokens.append(clean_token)
             # Use the feature's global max_activation for normalization
-            normalized = (activations.float() * 10 / record.max_activation).floor() if record.max_activation > 0 else torch.zeros_like(activations)
             return Example(
                 tokens=tokens,
-                activations=activations.float().tolist(),
-                normalized_activations=normalized.tolist(),
+                activations=activations.float(),
+                normalized_activations=(activations.float() * 10 / record.max_activation).floor() if record.max_activation > 0 else torch.zeros_like(activations),
             )
         
-        # 1. Joint stratified sampling for explanation and positive examples
-        # First, get all sorted indices based on max activation
-        max_activations = neuron_activations.max(dim=1).values
-        sorted_indices = torch.argsort(max_activations, descending=True)
-        
+        # 1. Stratified sampling for explanation and positive examples
         total_needed = min(num_explanation_examples + num_positive_examples, len(neuron_data_indices))
         
         if len(neuron_data_indices) <= total_needed:
-            # If we don't have enough examples, use all of them
-            all_sampled_indices = torch.arange(len(neuron_data_indices))
+            sampled_indices = torch.arange(len(neuron_data_indices))
         else:
-            # Do stratified sampling to get a good distribution across activation levels
-            all_sampled_indices = stratified_sample_by_max_activation(
+            sampled_indices = stratified_sample_by_max_activation(
                 neuron_activations=neuron_activations.float(),
                 n_samples=total_needed,
                 n_quantiles=stratified_quantiles,
@@ -218,21 +205,18 @@ class FeatureRecord:
             )
         
         # Split the stratified samples into explanation and positive examples
-        if len(all_sampled_indices) <= num_explanation_examples:
-            explanation_indices = all_sampled_indices
+        if len(sampled_indices) <= num_explanation_examples:
+            explanation_indices = sampled_indices
             positive_indices = torch.tensor([], dtype=torch.long)
         else:
-            # Take the first num_explanation_examples for explanations (highest activations)
-            explanation_indices = all_sampled_indices[:num_explanation_examples]
-            # Take the rest for positive examples
-            positive_indices = all_sampled_indices[num_explanation_examples:]
-        
+            explanation_indices = sampled_indices[:num_explanation_examples]
+            positive_indices = sampled_indices[num_explanation_examples:]
+
         # Create explanation examples
         record.explanation_examples = [
             create_example(neuron_data_indices[idx].item(), neuron_activations[idx])
             for idx in explanation_indices
         ]
-        
         # Create positive examples
         if len(positive_indices) > 0:
             record.positive_examples = [

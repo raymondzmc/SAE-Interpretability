@@ -1,25 +1,9 @@
-import asyncio  # For running async explainer
-import json
-import os
-from collections.abc import Sequence
-from pathlib import Path
-from typing import Any
+import asyncio
 import numpy as np
 import torch
 import wandb
 import argparse
 from settings import settings
-# from neuron_explainer.activations.activation_records import calculate_max_activation
-# from neuron_explainer.activations.activations import ActivationRecord
-# from neuron_explainer.explanations.calibrated_simulator import UncalibratedNeuronSimulator
-# from neuron_explainer.explanations.explainer import (  # ContextSize if needed
-#     PromptFormat,
-#     TokenActivationPairExplainer,
-# )
-# from neuron_explainer.explanations.explanations import ScoredSimulation
-# from neuron_explainer.explanations.few_shot_examples import FewShotExampleSet
-# from neuron_explainer.explanations.scoring import simulate_and_score
-# from neuron_explainer.explanations.simulator import LogprobFreeExplanationTokenSimulator
 from torch.nn.functional import mse_loss
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -41,62 +25,9 @@ from utils.plotting import create_pareto_plots
 from auto_interp.explainers.features import FeatureRecord, Feature
 from auto_interp.explainers.explainer import DefaultExplainer, ExplainerResult
 from auto_interp.clients import OpenAIClient, TogetherAIClient
-
-# Import scorers
+from auto_interp.explainers.sampler import stratified_sample_by_max_activation
 from auto_interp.scorers.classifier.detection import DetectionScorer
 from auto_interp.scorers.classifier.fuzz import FuzzingScorer
-try:
-    from auto_interp.scorers.embedding.embedding import EmbeddingScorer
-    from sentence_transformers import SentenceTransformer
-    HAS_EMBEDDING_SCORER = True
-except ImportError:
-    HAS_EMBEDDING_SCORER = False
-    print("Warning: EmbeddingScorer not available (missing sentence-transformers)")
-
-
-class MockTokenizer:
-    """Mock tokenizer for when tokens are already strings."""
-    is_mock = True
-    
-    def batch_decode(self, tokens):
-        """Just return the tokens as they're already strings."""
-        return tokens
-
-# async def _run_simulation_and_scoring(
-#     explanation_text: str,
-#     records_for_simulation: Sequence[ActivationRecord],
-#     model_name_for_simulator: str,
-#     few_shot_example_set: FewShotExampleSet,
-#     prompt_format: PromptFormat,
-#     num_retries: int = 5,
-# ) -> tuple[float | None, Any | None]:
-#     """Helper to run simulation and scoring with retries."""
-#     attempts = 0
-#     score = None
-#     scored_simulation = None
-#     while attempts < num_retries:  # Retry loop
-#         try:
-#             simulator = UncalibratedNeuronSimulator(
-#                 LogprobFreeExplanationTokenSimulator(
-#                     model_name_for_simulator,
-#                     explanation_text,
-#                     json_mode=True,
-#                     max_concurrent=10,
-#                     few_shot_example_set=few_shot_example_set,
-#                     prompt_format=prompt_format,
-#                 )
-#             )
-#             scored_simulation: ScoredSimulation = await simulate_and_score(simulator, records_for_simulation)
-#             score = scored_simulation.get_preferred_score() if scored_simulation else None
-
-#         except Exception as e:
-#             print(f"Error in attempt {attempts + 1}: {e}")
-#             attempts += 1
-
-#         if score is not None and not np.isnan(score):
-#             break
-
-#     return score, scored_simulation
 
 
 def run_evaluation(args: argparse.Namespace) -> None:
@@ -140,9 +71,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
 
     # Collect all metrics for pareto plots
     all_run_metrics = []
-    
-    # Initialize list to store all explanation scores across runs
-    all_explanation_scores = []
 
     for run in runs:
         run_id = run.id
@@ -358,51 +286,50 @@ def run_evaluation(args: argparse.Namespace) -> None:
         all_run_metrics.append(run_metrics)
         
         if args.generate_explanations:
+            if accumulated_data is None:
+                print("No activation data found, skipping explanation generation")
+                continue
+            
+            # Initialize dict to store all explanation scores across runs
+            all_explanation_scores = {}
+
+            # Initialize explainer
             explainer = DefaultExplainer(
                 client=OpenAIClient(
                     api_key=settings.openai_api_key,
-                    model=args.explanation_model  # Use the model specified in args
+                    model=args.explanation_model,
                 ),
                 tokenizer=tokenizer,
                 cot=True,
                 threshold=0.6,
+                activations=False,
             )
-            
-            # Skip embedding model loading to save time
-            # # Load embedding model once if we're evaluating explanations
-            # embedding_model = None
-            # if args.evaluate_explanations and HAS_EMBEDDING_SCORER:
-            #     print("Loading Stella embedding model for evaluation...")
-            #     embedding_model = SentenceTransformer('NovaSearch/stella_en_400M_v5', trust_remote_code=True)
-            #     print("✓ Loaded NovaSearch/stella_en_400M_v5 model")
-            
-            # Filter neurons with sufficient examples and construct activation records
-            # explanations_for_run = {}
 
             for sae_pos in model.raw_sae_positions:
                 data = accumulated_data[sae_pos]
+                all_explanation_scores[sae_pos] = []
                 
                 # Count occurrences of each neuron and calculate total activation
-                unique_neurons, counts = torch.unique(data['neuron_indices'], return_counts=True)
+                unique_neurons = torch.unique(data['neuron_indices'], return_counts=False)
                 neuron_total_activations = []
                 for neuron_idx in unique_neurons:
                     neuron_mask = data['neuron_indices'] == neuron_idx
                     neuron_activations = data['nonzero_activations'][neuron_mask].float()
-                    total_activation = neuron_activations.sum().item()
-                    neuron_total_activations.append(total_activation)
-                
-                neuron_total_activations = torch.tensor(neuron_total_activations)
-                
-                # Sort neurons by total activation (descending) and take top NUM_NEURONS
-                sorted_indices = torch.argsort(neuron_total_activations, descending=True)
-                top_neuron_indices = sorted_indices[:args.num_neurons]
-                neurons_to_explain = unique_neurons[top_neuron_indices]
-                
+                    neuron_total_activations.append(neuron_activations.max(dim=0).values)
+
+                neuron_total_activations = torch.stack(neuron_total_activations)
+                sampled_indices = stratified_sample_by_max_activation(
+                    neuron_activations=neuron_total_activations,
+                    n_samples=args.num_neurons,
+                    n_quantiles=args.stratified_quantiles,
+                    seed=config.seed,
+                )
+                sampled_neurons = unique_neurons[sampled_indices]
                 print(f"SAE position {sae_pos}: {len(unique_neurons)} total neurons, taking top {args.num_neurons}")
-                print(f"  Processing {len(neurons_to_explain)} neurons for explanation...")
+                print(f"  Processing {len(sampled_neurons)} neurons for explanation...")
                 
-            #     # Process each neuron for explanation
-                for neuron_idx in neurons_to_explain:
+                # Process each neuron for explanation
+                for neuron_idx in sampled_neurons:
                     neuron_idx_item = neuron_idx.item()
                     feature = Feature(
                         sae_pos=sae_pos,
@@ -415,126 +342,77 @@ def run_evaluation(args: argparse.Namespace) -> None:
                         all_token_ids=all_token_ids,
                         neuron_idx=neuron_idx,
                         num_explanation_examples=args.num_features_to_explain,
-                        num_positive_examples=100,  # For scoring
-                        num_negative_examples=100,  # For scoring
+                        num_positive_examples=100,
+                        num_negative_examples=100,
                         stratified_quantiles=args.stratified_quantiles,
                         min_examples_required=args.min_activated_features_per_neuron,
-                        seed=42,
+                        seed=config.seed,
                     )
                     
                     # Skip if we couldn't create a valid feature record
                     if feature_record is None:
                         print(f"  Skipping neuron {neuron_idx_item} - not enough examples")
                         continue
+
                     # Generate explanation using the explanation_examples
-                    explanation: ExplainerResult = explainer(feature_record)
+                    explanation: ExplainerResult = asyncio.run(explainer(feature_record))
 
                     # Score the explanation if requested
-                    if args.evaluate_explanations:
-                        print(f"  Neuron {neuron_idx_item}: {explanation.explanation}")
-                        
-                        # Create mock tokenizer since tokens are already strings
-                        mock_tokenizer = MockTokenizer()
-                        
-                        # Create scoring client for Detection and Fuzz scorers
-                        score_client = TogetherAIClient(
-                            api_key=settings.together_ai_api_key,  # Use together API key
-                            model=args.scoring_model
-                        )
-                        
-                        # 1. Detection Score
-                        print(f"    Computing Detection score...")
-                        detection_scorer = DetectionScorer(
-                            client=score_client,
-                            tokenizer=mock_tokenizer,
-                            verbose=False,
-                            batch_size=10,
-                        )
-                        detection_result = asyncio.run(detection_scorer(explanation))
-                        import pdb; pdb.set_trace()
-                        # Calculate accuracy from the classifier outputs
-                        detection_outputs = detection_result.score
-                        correct_predictions = sum(1 for output in detection_outputs if output.correct)
-                        detection_score = correct_predictions / len(detection_outputs) if detection_outputs else 0
-                        print(f"    ✓ Detection score: {detection_score:.3f} ({correct_predictions}/{len(detection_outputs)} correct)")
-                        
-                        # 2. Fuzz Score
-                        print(f"    Computing Fuzz score...")
-                        fuzz_scorer = FuzzingScorer(
-                            client=score_client,
-                            tokenizer=mock_tokenizer,
-                            verbose=False,
-                            batch_size=1,
-                            threshold=0.3,
-                        )
-                        fuzz_result = asyncio.run(fuzz_scorer(explanation))
-                        # Calculate accuracy from the classifier outputs
-                        fuzz_outputs = fuzz_result.score
-                        correct_fuzz = sum(1 for output in fuzz_outputs if output.correct)
-                        fuzz_score = correct_fuzz / len(fuzz_outputs) if fuzz_outputs else 0
-                        print(f"    ✓ Fuzz score: {fuzz_score:.3f} ({correct_fuzz}/{len(fuzz_outputs)} correct)")
-                        
-                        # 3. Embedding Score - Skipped to save time
-                        embedding_score = None
-                        # if HAS_EMBEDDING_SCORER and embedding_model is not None:
-                        #     print(f"    Computing Embedding score...")
-                        #     
-                        #     embedding_scorer = EmbeddingScorer(
-                        #         model=embedding_model,
-                        #         tokenizer=mock_tokenizer,
-                        #         verbose=False,
-                        #         batch_size=10,
-                        #     )
-                        #     embedding_result = asyncio.run(embedding_scorer(explanation))
-                        #     
-                        #     # Calculate average similarity for positive and negative examples
-                        #     pos_similarities = []
-                        #     neg_similarities = []
-                        #     for sample, output in zip(embedding_result.record.positive_examples + embedding_result.record.negative_examples, 
-                        #                             embedding_result.score):
-                        #         if sample in embedding_result.record.positive_examples:
-                        #             pos_similarities.append(output.similarity)
-                        #         else:
-                        #             neg_similarities.append(output.similarity)
-                        #     
-                        #     if pos_similarities and neg_similarities:
-                        #         avg_pos_sim = sum(pos_similarities) / len(pos_similarities)
-                        #         avg_neg_sim = sum(neg_similarities) / len(neg_similarities)
-                        #         # Score is the difference between positive and negative similarities
-                        #         embedding_score = avg_pos_sim - avg_neg_sim
-                        #         print(f"    ✓ Embedding score: {embedding_score:.4f} (pos: {avg_pos_sim:.4f}, neg: {avg_neg_sim:.4f})")
-                        #     else:
-                        #         print(f"    ⚠️ Could not compute embedding score")
-                        # else:
-                        #     print(f"    ⚠️ Embedding scorer not available")
-                        
-                        # Store scores
-                        all_explanation_scores.append({
-                            'sae_pos': sae_pos,
-                            'neuron_idx': neuron_idx_item,
-                            'explanation': explanation.explanation,
-                            'detection_score': detection_score,
-                            'fuzz_score': fuzz_score,
-                            'embedding_score': embedding_score,  # Will be None
-                        })
-                    else:
-                        print(f"  Neuron {neuron_idx_item}: {explanation.explanation}")
-            
-            # # Save explanations to Wandb
-            # if explanations_for_run:
-            #     try:
-            #         print(f"Saving explanations to Wandb for run {run_id}")
-            #         save_explanations_to_wandb(explanations=explanations_for_run)
-            #         print(f"Successfully uploaded explanations to Wandb for run {run_id}")
+                    print(f"  Neuron {neuron_idx_item}: {explanation.explanation}")
                     
-            #     except Exception as e:
-            #         print(f"Warning: Failed to upload explanations to Wandb: {e}")
-        
+                    # Create scoring client for Detection and Fuzz scorers
+                    score_client = TogetherAIClient(
+                        api_key=settings.together_ai_api_key,  # Use together API key
+                        model=args.scoring_model
+                    )
+                    
+                    # 1. Detection Score
+                    print(f"    Computing Detection score...")
+                    detection_scorer = DetectionScorer(
+                        client=score_client,
+                        verbose=False,
+                        batch_size=5,
+                        use_structured_output=True,
+                    )
+                    detection_result = asyncio.run(detection_scorer(explanation))
+                    detection_score = detection_result.score
+                    print(f"    ✓ Detection score: {detection_score:.3f}")
+                    
+                    # 2. Fuzz Score
+                    print(f"    Computing Fuzz score...")
+                    fuzz_scorer = FuzzingScorer(
+                        client=score_client,
+                        verbose=False,
+                        batch_size=5,
+                        threshold=0.3,
+                        use_structured_output=True,
+                    )
+                    fuzz_result = asyncio.run(fuzz_scorer(explanation))
+                    # The score is now directly the accuracy
+                    fuzz_score = fuzz_result.score
+                    print(f"    ✓ Fuzz score: {fuzz_score:.3f}")
+                    # Store scores
+                    all_explanation_scores[sae_pos].append({
+                        'neuron_idx': neuron_idx_item,
+                        'explanation': explanation.explanation,
+                        'detection_score': detection_score,
+                        'fuzz_score': fuzz_score,
+                    })
+            
+            # Save explanations to Wandb
+            try:
+                print(f"Saving explanations to Wandb for run {run_id}")
+                save_explanations_to_wandb(explanations=all_explanation_scores, output_path=args.output_path)
+                print(f"Successfully uploaded explanations to Wandb for run {run_id}")
+                
+            except Exception as e:
+                print(f"Warning: Failed to upload explanations to Wandb: {e}")
+    
         # Finish the current wandb run before moving to the next one
         wandb.finish()
 
     # Save and display scores if they were computed
-    if args.evaluate_explanations and all_explanation_scores:
+    if args.generate_explanations and all_explanation_scores:
         print("\n" + "=" * 60)
         print("EXPLANATION SCORES SUMMARY")
         print("=" * 60)
@@ -557,10 +435,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 print(f"  Detection: mean={np.mean(detection_scores):.3f}, std={np.std(detection_scores):.3f}, n={len(detection_scores)}")
             if fuzz_scores:
                 print(f"  Fuzz:      mean={np.mean(fuzz_scores):.3f}, std={np.std(fuzz_scores):.3f}, n={len(fuzz_scores)}")
-            # Embedding score skipped to save time
-            # if embedding_scores:
-            #     print(f"  Embedding: mean={np.mean(embedding_scores):.3f}, std={np.std(embedding_scores):.3f}, n={len(embedding_scores)}")
-            
+
             # Display top scoring explanations
             print("\nTop 5 explanations by Detection score:")
             sorted_by_detection = sorted([s for s in all_explanation_scores if s['detection_score'] is not None], 
@@ -570,7 +445,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 print(f"     {score_entry['explanation'][:100]}...")
 
     # Create pareto plots after processing all runs
-    # print(f"\nCreating pareto plots from {len(all_run_metrics)} runs...")
     create_pareto_plots(all_run_metrics)
 
 
@@ -594,7 +468,7 @@ def main():
     parser.add_argument("--n_eval_samples", type=int, default=50000,
                        help="Number of evaluation samples to process (default: 50000)")
     parser.add_argument("--stratified_quantiles", type=int, default=20,
-                       help="Number of quantiles for stratified sampling of activation examples (default: 4)")
+                       help="Number of quantiles for stratified sampling of activation examples and neurons (default: 20)")
     
     # Model parameters
     parser.add_argument("--explanation_model", type=str, default="gpt-4o",
@@ -622,9 +496,6 @@ def main():
     
     parser.add_argument("--generate_explanations", action="store_true", default=False,
                        help="Generate neuron explanations (default: False)")
-    
-    parser.add_argument("--evaluate_explanations", action="store_true",
-                       help="Evaluate explanation quality (default: False)")
     
     parser.add_argument("--force_recompute", action="store_true", default=False,
                        help="Force recomputation of metrics even if existing ones are found (default: False)")

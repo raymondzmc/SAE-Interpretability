@@ -2,29 +2,48 @@ import openai
 import together
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, TypeVar, Type, List
+from pydantic import BaseModel, ValidationError
+from together.types.chat_completions import ChatCompletionChoicesData, LogprobsPart
+
+T = TypeVar('T', bound=BaseModel)
+
+
+@dataclass
+class TopLogProb:
+    """Represents a single token alternative with its log probability."""
+    token: str
+    logprob: float
+
+
+@dataclass  
+class LogProb:
+    """Represents a token with its alternatives."""
+    token: str
+    logprob: float
+    top_logprobs: List[TopLogProb]
 
 
 @dataclass
 class Response:
     text: str
-    tokens: list[str]  # Output tokens
-    logprobs: list[float]  # Log probabilities for output tokens
-    prompt_logprobs: list[float]  # Log probabilities for prompt tokens
+    logprobs: List[LogProb]
     cost: float
-    input_tokens: int  # Number of input tokens
-    output_tokens: int  # Number of output tokens
+    input_tokens: int
+    output_tokens: int
+    structured_response: Optional[BaseModel] = None
 
 
 class Client(ABC):
-    def __init__(self, api_key: str, model: str):
-        self.api_key = api_key
-        self.model = model
+    api_key: str
+    model: str
+    max_logprobs: int
 
     @abstractmethod
     async def generate(
         self, 
         messages: list[dict[str, str]],
+        response_model: Optional[Type[T]] = None,
         **kwargs
     ) -> Response:
         raise NotImplementedError
@@ -42,50 +61,70 @@ OPENAI_PRICING = {
 }
 
 
-class OpenAIClient:
+class OpenAIClient(Client):
+    max_logprobs: int = 20
+
     def __init__(self, api_key: str, model: str):
-        self.client = openai.OpenAI(api_key=api_key)
+        self.client = openai.AsyncOpenAI(api_key=api_key)
         if model not in OPENAI_MODELS:
             raise ValueError(f"Invalid model: {model}. Available models: {list(OPENAI_MODELS.keys())}")
         self.model_name = OPENAI_MODELS[model]
 
-    def generate(self, messages: list[dict[str, str]], **kwargs):
-        # Request logprobs if not explicitly disabled
+    async def generate(self, messages: list[dict[str, str]], response_model: Optional[Type[T]] = None, **kwargs) -> Response:
+        """Async generation with optional structured output."""
+        structured_response = None
+        logprobs = []
+
         if "logprobs" not in kwargs:
             kwargs["logprobs"] = True
         if "top_logprobs" not in kwargs and kwargs.get("logprobs"):
-            kwargs["top_logprobs"] = 1
-            
-        response = self.client.chat.completions.create(
-            model=self.model_name, 
-            messages=messages, 
-            **kwargs
-        )
-        
-        # Extract text
+            kwargs["top_logprobs"] = self.max_logprobs
+
+        response = None
+        if response_model:
+            response = await self.client.beta.chat.completions.parse(
+                model=self.model_name,
+                messages=messages,
+                response_format=response_model,
+                **kwargs
+            )
+            structured_response = response.choices[0].message.parsed
+        else:
+            response = await self.client.chat.completions.create(
+                model=self.model_name, 
+                messages=messages, 
+                **kwargs
+            )
+
         text = response.choices[0].message.content or ""
         
-        # Extract token usage
+        if response.choices[0].logprobs and response.choices[0].logprobs.content:
+            for token_data in response.choices[0].logprobs.content:
+                top_logprobs = []
+                if hasattr(token_data, 'top_logprobs') and token_data.top_logprobs:
+                    for alt in token_data.top_logprobs:
+                        top_logprobs.append(TopLogProb(
+                            token=alt.token,
+                            logprob=alt.logprob
+                        ))
+                logprobs.append(LogProb(
+                    token=token_data.token,
+                    logprob=token_data.logprob,
+                    top_logprobs=top_logprobs
+                ))
+
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
-        
-        # Calculate cost (pricing is per 1M tokens)
         pricing = OPENAI_PRICING.get(self.model_name, {"input": 0, "output": 0})
         cost = (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
         
-        # For OpenAI, we return empty lists for logprobs as requested
-        tokens = []
-        logprobs = []
-        prompt_logprobs = []
-        
         return Response(
             text=text,
-            tokens=tokens,
             logprobs=logprobs,
-            prompt_logprobs=prompt_logprobs,
             cost=cost,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            structured_response=structured_response,
         )
 
 
@@ -102,26 +141,81 @@ TOGETHERAI_PRICING = {
 }
 
 
-class TogetherAIClient:
+class TogetherAIClient(Client):
+    max_logprobs: int = 5
+
     def __init__(self, api_key: str, model: str):
-        self.client = together.Client(api_key=api_key)
+        self.client = together.AsyncTogether(api_key=api_key)
         if model not in TOGETHERAI_MODELS:
             raise ValueError(f"Invalid model: {model}. Available models: {list(TOGETHERAI_MODELS.keys())}")
         self.model_name = TOGETHERAI_MODELS[model]
+        # Llama 3.2 doesn't support alternatives, so set max to 1
+        if "11B" in self.model_name:
+            self.max_logprobs = 1
 
-    def generate(self, messages: list[dict[str, str]], **kwargs):
-        # Request logprobs if not explicitly disabled
-        if "logprobs" not in kwargs:
-            kwargs["logprobs"] = 1  # TogetherAI uses integer for number of logprobs
-            
-        response = self.client.chat.completions.create(
-            model=self.model_name, 
-            messages=messages, 
+    async def generate(self, messages: list[dict[str, str]], response_model: Optional[Type[T]] = None, **kwargs) -> Response:
+        """Async generation with optional structured output."""
+        structured_response = None
+        logprobs = []
+
+        # TogetherAI uses 'logprobs' as an integer, not 'top_logprobs'
+        # Cap at model's maximum
+        kwargs["logprobs"] = min(self.max_logprobs, kwargs.get("logprobs", self.max_logprobs))
+        
+        if response_model is not None:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "schema": response_model.model_json_schema(),
+            }
+
+        response = await self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
             **kwargs
         )
-        
-        # Extract text
-        text = response.choices[0].message.content or ""
+        if len(response.choices) == 0:
+            raise Exception(f"No response choices from model: {response}")
+
+        response_choice: ChatCompletionChoicesData = response.choices[0]
+        text = response_choice.message.content or ""
+        if text == "":
+            raise Exception(f"No text in response choice: {response_choice}")
+
+        # Parse structured response
+        if response_model is not None:
+            try:
+                structured_response = response_model.model_validate_json(text)
+            except ValidationError as e:
+                raise Exception(f"Failed to parse structured response {e.message}: {text}")
+
+        # Extract logprobs if available
+        if response_choice.logprobs:
+            logprobs_data: LogprobsPart = response_choice.logprobs
+            tokens = logprobs_data.tokens if hasattr(logprobs_data, 'tokens') and logprobs_data.tokens else []
+            token_logprobs = logprobs_data.token_logprobs if hasattr(logprobs_data, 'token_logprobs') and logprobs_data.token_logprobs else []
+            top_logprobs_data = logprobs_data.top_logprobs if hasattr(logprobs_data, 'top_logprobs') and logprobs_data.top_logprobs else []
+            
+            # Build LogProb entries
+            for i, token in enumerate(tokens):
+                top_logprobs = []
+                if top_logprobs_data and i < len(top_logprobs_data) and top_logprobs_data[i]:
+                    for alt_token, alt_logprob in top_logprobs_data[i].items():
+                        top_logprobs.append(TopLogProb(
+                            token=alt_token,
+                            logprob=alt_logprob
+                        ))
+                elif token_logprobs and i < len(token_logprobs):
+                    # If no alternatives, just include the selected token
+                    top_logprobs.append(TopLogProb(
+                        token=token,
+                        logprob=token_logprobs[i] if token_logprobs[i] is not None else 0.0
+                    ))
+                
+                logprobs.append(LogProb(
+                    token=token,
+                    logprob=token_logprobs[i] if token_logprobs and i < len(token_logprobs) and token_logprobs[i] is not None else 0.0,
+                    top_logprobs=top_logprobs
+                ))
         
         # Extract token usage
         input_tokens = response.usage.prompt_tokens if response.usage else 0
@@ -131,27 +225,11 @@ class TogetherAIClient:
         pricing = TOGETHERAI_PRICING.get(self.model_name, {"input": 0, "output": 0})
         cost = (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
         
-        # Extract logprobs if available
-        tokens = []
-        logprobs = []
-        prompt_logprobs = []
-        
-        # TogetherAI may provide logprobs in a different format
-        if hasattr(response.choices[0], 'logprobs') and response.choices[0].logprobs:
-            logprobs_data = response.choices[0].logprobs
-            if hasattr(logprobs_data, 'content') and logprobs_data.content:
-                for token_data in logprobs_data.content:
-                    if hasattr(token_data, 'token'):
-                        tokens.append(token_data.token)
-                    if hasattr(token_data, 'logprob'):
-                        logprobs.append(token_data.logprob)
-        
         return Response(
             text=text,
-            tokens=tokens,
             logprobs=logprobs,
-            prompt_logprobs=prompt_logprobs,
             cost=cost,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            structured_response=structured_response,
         )

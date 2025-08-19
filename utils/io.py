@@ -717,17 +717,22 @@ def load_metrics_from_wandb(
 # Evaluation Results Functions
 
 def save_explanations_to_wandb(
-    explanations: dict[str, dict[str, Any]]
+    explanations: dict[str, dict[str, Any]],
+    output_path: str = "/tmp"
 ) -> None:
     """Save explanations as Wandb artifacts to the current run.
     
     Args:
         explanations: Dictionary mapping neuron keys to explanation data
+        output_path: Path for storing temporary files (default: /tmp)
     """
     assert wandb.run is not None, "No active Weights & Biases run. Call wandb.init() first."
-        
-    # Use temporary files for explanations and summary
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanations_') as f:
+    
+    # Use a temporary file for explanations in the specified output path
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanations_', dir=str(output_path)) as f:
         json.dump(explanations, f, indent=2)
         temp_explanations_path = f.name
     
@@ -736,14 +741,21 @@ def save_explanations_to_wandb(
         "num_explanations": len(explanations),
         "explained_neurons_per_layer": {}
     }
-    for key in explanations.keys():
-        if "_neuron_" in key:
+    
+    # Handle both nested dict structure (SAE positions -> neurons) and flat structure
+    for key, value in explanations.items():
+        if isinstance(value, dict) and not any(k in ['explanation', 'detection_score', 'fuzz_score'] for k in value.keys()):
+            # Nested structure: key is SAE position, value is dict of neurons
+            layer_name = key
+            summary_stats["explained_neurons_per_layer"][layer_name] = len(value)
+        elif "_neuron_" in key:
+            # Flat structure: key contains neuron info
             layer_name = key.split("_neuron_")[0]
             if layer_name not in summary_stats["explained_neurons_per_layer"]:
                 summary_stats["explained_neurons_per_layer"][layer_name] = 0
             summary_stats["explained_neurons_per_layer"][layer_name] += 1
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanation_summary_') as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, prefix='explanation_summary_', dir=str(output_path)) as f:
         json.dump(summary_stats, f, indent=2)
         temp_summary_path = f.name
 
@@ -783,13 +795,15 @@ def save_explanations_to_wandb(
 
 def load_explanations_from_wandb(
     run_id: str,
-    project: str = "raymondl/tinystories-1m"
+    project: str = "raymondl/tinystories-1m",
+    output_path: str = "./artifacts"
 ) -> dict[str, dict[str, Any]] | None:
     """Load explanations from Wandb artifacts.
     
     Args:
         run_id: The Wandb run ID to load files from
         project: Wandb project name
+        output_path: Path for downloading artifacts (default: ./artifacts)
     
     Returns:
         Dictionary mapping neuron keys to explanation data, or None if not found
@@ -817,13 +831,36 @@ def load_explanations_from_wandb(
             
             # Use the latest explanations artifact (highest version)
             latest_artifact = max(explanations_artifacts, key=lambda x: x.version)
-            artifact_dir = latest_artifact.download()
+            
+            # Download to the specified output path
+            output_path = Path(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            download_dir = output_path / f"downloaded_explanations_{run_id}"
+            
+            artifact_dir = latest_artifact.download(root=str(download_dir))
             
             explanations_path = Path(artifact_dir) / "explanations.json"
             if explanations_path.exists():
                 with open(explanations_path, "r") as f:
                     explanations = json.load(f)
                 print(f"Loaded explanations from Wandb artifact: {latest_artifact.name} (v{latest_artifact.version})")
+                
+                # Also load summary if available
+                summary_path = Path(artifact_dir) / "explanation_summary.json"
+                if summary_path.exists():
+                    with open(summary_path, "r") as f:
+                        summary = json.load(f)
+                    print(f"  Total explanations: {summary.get('num_explanations', 'N/A')}")
+                    for layer, count in summary.get('explained_neurons_per_layer', {}).items():
+                        print(f"  {layer}: {count} neurons")
+                
+                # Clean up downloaded files after loading
+                try:
+                    import shutil
+                    shutil.rmtree(download_dir)
+                except Exception as e:
+                    print(f"Warning: Could not clean up downloaded files at {download_dir}: {e}")
+                
                 return explanations
         except Exception as e:
             print(f"Could not load explanations from artifacts: {e}")

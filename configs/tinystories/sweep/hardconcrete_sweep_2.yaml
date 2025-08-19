@@ -1,0 +1,2 @@
+sparsity_coeff: [1e-4, 5e-5, 1e-5, 5e-6, 1e-6]
+apply_relu_to_magnitude: [false]

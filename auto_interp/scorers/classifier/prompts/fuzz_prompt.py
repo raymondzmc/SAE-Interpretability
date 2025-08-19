@@ -82,7 +82,7 @@ Text examples:
 """
 
 
-def prompt(examples, explanation):
+def fuzz_prompt(examples, explanation):
     generation_prompt = GENERATION_PROMPT.format(
         explanation=explanation, examples=examples
     )

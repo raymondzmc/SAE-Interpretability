@@ -1,0 +1,345 @@
+{
+  "project": "raymondl/tinystories-1m-hardconcrete",
+  "configurations": {
+    "mag": [
+      {
+        "run_id": "3mlm5bhw",
+        "run_name": "hard_concrete_sparsity_coeff_0.01_apply_relu_to_magnitude_true_coefficient_threshold_None",
+        "sparsity_coeff": 0.01,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 8,
+            "sparsity_l0": 5.080306542396546,
+            "mse": 0.0013982544736936687,
+            "explained_variance": 0.8536470003128052,
+            "alive_dict_components_proportion": 0.0025
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 1,
+            "sparsity_l0": 1.0,
+            "mse": 0.000848951539490372,
+            "explained_variance": 0.32527258282899857,
+            "alive_dict_components_proportion": 0.0003125
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "f61uauzd",
+        "run_name": "hard_concrete_sparsity_coeff_0.01_apply_relu_to_magnitude_true_coefficient_threshold_1e-6",
+        "sparsity_coeff": 0.01,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 8,
+            "sparsity_l0": 5.080274997711181,
+            "mse": 0.0013982544736936687,
+            "explained_variance": 0.8536470003128052,
+            "alive_dict_components_proportion": 0.0025
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 1,
+            "sparsity_l0": 1.0,
+            "mse": 0.000848951539490372,
+            "explained_variance": 0.32527258282899857,
+            "alive_dict_components_proportion": 0.0003125
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "6672hdsg",
+        "run_name": "hard_concrete_sparsity_coeff_5e-3_apply_relu_to_magnitude_true_coefficient_threshold_None",
+        "sparsity_coeff": 0.005,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 10,
+            "sparsity_l0": 7.136153221130371,
+            "mse": 0.001150678744306788,
+            "explained_variance": 0.879862450003624,
+            "alive_dict_components_proportion": 0.003125
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 1,
+            "sparsity_l0": 1.0,
+            "mse": 0.0006604429881554097,
+            "explained_variance": 0.2895856575369835,
+            "alive_dict_components_proportion": 0.0003125
+          }
+        }
+      },
+      {
+        "run_id": "xb0xn038",
+        "run_name": "hard_concrete_sparsity_coeff_5e-3_apply_relu_to_magnitude_true_coefficient_threshold_1e-6",
+        "sparsity_coeff": 0.005,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 10,
+            "sparsity_l0": 7.136116797447205,
+            "mse": 0.001150678744306788,
+            "explained_variance": 0.879862450003624,
+            "alive_dict_components_proportion": 0.003125
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 1,
+            "sparsity_l0": 1.0,
+            "mse": 0.0006604429881554097,
+            "explained_variance": 0.2895856575369835,
+            "alive_dict_components_proportion": 0.0003125
+          }
+        }
+      },
+      {
+        "run_id": "7pthy7h1",
+        "run_name": "hard_concrete_sparsity_coeff_1e-3_apply_relu_to_magnitude_true_coefficient_threshold_None",
+        "sparsity_coeff": 0.001,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 46,
+            "sparsity_l0": 26.08803243255615,
+            "mse": 0.0006924813895020634,
+            "explained_variance": 0.9278769673109054,
+            "alive_dict_components_proportion": 0.014375
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 3,
+            "sparsity_l0": 1.9763047096729278,
+            "mse": 0.0007751135767903179,
+            "explained_variance": 0.3781752436161041,
+            "alive_dict_components_proportion": 0.0009375
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 5,
+            "sparsity_l0": 3.5541922364234924,
+            "mse": 0.00031196737452410164,
+            "explained_variance": 0.6667767632007598,
+            "alive_dict_components_proportion": 0.0015625
+          }
+        }
+      },
+      {
+        "run_id": "ditr50c5",
+        "run_name": "hard_concrete_sparsity_coeff_1e-3_apply_relu_to_magnitude_true_coefficient_threshold_1e-6",
+        "sparsity_coeff": 0.001,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 46,
+            "sparsity_l0": 25.80191973114014,
+            "mse": 0.0006924814290832728,
+            "explained_variance": 0.9278769612312316,
+            "alive_dict_components_proportion": 0.014375
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 3,
+            "sparsity_l0": 1.9761973860263824,
+            "mse": 0.0007751135767903179,
+            "explained_variance": 0.37817524367570876,
+            "alive_dict_components_proportion": 0.0009375
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 5,
+            "sparsity_l0": 3.5535386219024656,
+            "mse": 0.00031196737510617823,
+            "explained_variance": 0.6667767626047134,
+            "alive_dict_components_proportion": 0.0015625
+          }
+        }
+      }
+    ],
+    "no_mag": [
+      {
+        "run_id": "fxw4y1nt",
+        "run_name": "hard_concrete_sparsity_coeff_0.01_apply_relu_to_magnitude_false_coefficient_threshold_None",
+        "sparsity_coeff": 0.01,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.009521462889388203,
+            "explained_variance": -2.766493758651553e-10,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "6bjq3t2q",
+        "run_name": "hard_concrete_sparsity_coeff_0.01_apply_relu_to_magnitude_false_coefficient_threshold_1e-6",
+        "sparsity_coeff": 0.01,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.009521462889388203,
+            "explained_variance": -2.766493758651553e-10,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "uqtnep4e",
+        "run_name": "hard_concrete_sparsity_coeff_5e-3_apply_relu_to_magnitude_false_coefficient_threshold_None",
+        "sparsity_coeff": 0.005,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.009521462889388203,
+            "explained_variance": -2.766493758651553e-10,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "ctv5ia92",
+        "run_name": "hard_concrete_sparsity_coeff_5e-3_apply_relu_to_magnitude_false_coefficient_threshold_1e-6",
+        "sparsity_coeff": 0.005,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.009521462889388203,
+            "explained_variance": -2.766493758651553e-10,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "w18lql22",
+        "run_name": "hard_concrete_sparsity_coeff_1e-3_apply_relu_to_magnitude_false_coefficient_threshold_None",
+        "sparsity_coeff": 0.001,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 39,
+            "sparsity_l0": 31.218093349456787,
+            "mse": 0.009486625051125883,
+            "explained_variance": 0.003653053004294634,
+            "alive_dict_components_proportion": 0.0121875
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      },
+      {
+        "run_id": "j6ku5mou",
+        "run_name": "hard_concrete_sparsity_coeff_1e-3_apply_relu_to_magnitude_false_coefficient_threshold_1e-6",
+        "sparsity_coeff": 0.001,
+        "metrics": {
+          "blocks.2.hook_resid_pre": {
+            "alive_dict_components": 38,
+            "sparsity_l0": 29.963216121673582,
+            "mse": 0.009486627275124192,
+            "explained_variance": 0.003652821043971926,
+            "alive_dict_components_proportion": 0.011875
+          },
+          "blocks.4.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0012705993566196412,
+            "explained_variance": 1.0665505686802134e-07,
+            "alive_dict_components_proportion": 0.0
+          },
+          "blocks.6.hook_resid_pre": {
+            "alive_dict_components": 0,
+            "sparsity_l0": 0.0,
+            "mse": 0.0009285062130074948,
+            "explained_variance": 1.751559175318107e-07,
+            "alive_dict_components_proportion": 0.0
+          }
+        }
+      }
+    ]
+  }
+}
