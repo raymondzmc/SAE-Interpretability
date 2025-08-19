@@ -50,4 +50,4 @@ saes:
   hard_concrete_stretch_limits: [-0.1, 1.1]
   tied_encoder_init: true
   apply_relu_to_magnitude: true
-  coefficient_threshold: null
+  coefficient_threshold: 0.5
