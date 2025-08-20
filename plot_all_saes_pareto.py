@@ -24,7 +24,7 @@ plt.rcParams['font.size'] = 9
 
 def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[str, List[Dict]]:
     """
-    Collect metrics data for all SAE types including HardConcrete with gate type separation.
+    Collect metrics data for all SAE types including HardConcrete.
     
     Returns:
         Dictionary with SAE type keys, each containing list of run data
@@ -42,8 +42,7 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[s
     data = {
         'relu': [],
         'gated': [],
-        'hardconcrete_dep': [],  # Input-dependent gates
-        'hardconcrete_indep': []  # Input-independent gates
+        'hardconcrete': []  # Single HardConcrete type
     }
     
     # Track layer names
@@ -54,31 +53,13 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[s
         
         # Determine SAE type
         sae_type = None
-        if 'relu' in name_lower:
+        if 'relu' in name_lower and 'apply_relu_to_magnitude_true' not in name_lower:
             sae_type = 'relu'
-        elif 'gated' in name_lower and 'hard_concrete' not in name_lower:
+        elif 'gated' in name_lower and 'apply_relu_to_magnitude_true' not in name_lower:
             sae_type = 'gated'
-        elif 'hard_concrete' in name_lower or 'hardconcrete' in name_lower:
-            # For HardConcrete, we need to load the model to check gate type
-            try:
-                print(f"  Checking HardConcrete run {run.name} ({run.id})...")
-                model = SAETransformer.from_wandb(f"{project}/{run.id}")
-                
-                # Check if this is actually a HardConcrete SAE
-                if str(model.sae_config.sae_type) == "SAEType.HARD_CONCRETE":
-                    if model.sae_config.input_dependent_gates:
-                        sae_type = 'hardconcrete_dep'
-                    else:
-                        sae_type = 'hardconcrete_indep'
-                
-                # Clean up model
-                del model
-                import torch
-                torch.cuda.empty_cache()
-                
-            except Exception as e:
-                print(f"    Error loading model: {e}")
-                continue
+        elif 'apply_relu_to_magnitude_true' in name_lower:
+            # This is the new HardConcrete type
+            sae_type = 'hardconcrete'
         else:
             continue  # Skip other types
         
@@ -192,24 +173,21 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
     colors = {
         'relu': '#1f77b4',           # Blue
         'gated': '#ff7f0e',          # Orange  
-        'hardconcrete_dep': '#2ca02c',    # Green
-        'hardconcrete_indep': '#d62728'   # Red
+        'hardconcrete': '#2ca02c'    # Green
     }
     
     # Marker styles - more distinct shapes
     markers = {
         'relu': 'o',        # Circle
         'gated': 's',       # Square
-        'hardconcrete_dep': '^',    # Triangle up
-        'hardconcrete_indep': 'D'   # Diamond
+        'hardconcrete': '^' # Triangle up
     }
     
     # Labels for legend
     labels = {
         'relu': 'ReLU',
         'gated': 'Gated',
-        'hardconcrete_dep': 'HC (input-dep)',
-        'hardconcrete_indep': 'HC (input-indep)'
+        'hardconcrete': 'HardConcrete'
     }
     
     # Track filtered statistics
@@ -226,7 +204,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 1: MSE vs L0 (minimize both)
         ax1 = axes[0]
-        for sae_type in ['relu', 'gated', 'hardconcrete_dep', 'hardconcrete_indep']:
+        for sae_type in ['relu', 'gated', 'hardconcrete']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -301,7 +279,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 2: Explained Variance vs L0 (minimize L0, maximize explained variance)
         ax2 = axes[1]
-        for sae_type in ['relu', 'gated', 'hardconcrete_dep', 'hardconcrete_indep']:
+        for sae_type in ['relu', 'gated', 'hardconcrete']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -372,7 +350,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 3: Alive Dictionary Elements vs L0
         ax3 = axes[2]
-        for sae_type in ['relu', 'gated', 'hardconcrete_dep', 'hardconcrete_indep']:
+        for sae_type in ['relu', 'gated', 'hardconcrete']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -482,8 +460,7 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
     display_names = {
         'relu': 'ReLU',
         'gated': 'Gated',
-        'hardconcrete_dep': 'HardConcrete (input-dependent)',
-        'hardconcrete_indep': 'HardConcrete (input-independent)'
+        'hardconcrete': 'HardConcrete'
     }
     
     for layer_name in layers:
@@ -491,7 +468,7 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
         print(f"LAYER: {layer_name}")
         print(f"{'='*80}")
         
-        for sae_type in ['relu', 'gated', 'hardconcrete_dep', 'hardconcrete_indep']:
+        for sae_type in ['relu', 'gated', 'hardconcrete']:
             if not data.get(sae_type):
                 continue
             
