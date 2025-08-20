@@ -5,8 +5,121 @@ from abc import ABC, abstractmethod
 from typing import Optional, TypeVar, Type, List
 from pydantic import BaseModel, ValidationError
 from together.types.chat_completions import ChatCompletionChoicesData, LogprobsPart
+import together.error
+import asyncio
+import random
+import logging
+from functools import wraps
 
 T = TypeVar('T', bound=BaseModel)
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+
+async def retry_with_exponential_backoff(
+    func,
+    max_retries: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    exponential_base: float = 2.0,
+    jitter: bool = True,
+):
+    """
+    Retry a function with exponential backoff.
+    
+    Args:
+        func: The async function to retry
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay between retries in seconds
+        max_delay: Maximum delay between retries in seconds
+        exponential_base: Base for exponential backoff
+        jitter: Whether to add random jitter to delays
+    
+    Returns:
+        The result of the function call
+    
+    Raises:
+        The last exception if all retries fail
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except Exception as e:
+            last_exception = e
+            
+            # Check if this is a retryable error
+            is_retryable = False
+            error_message = str(e).lower()
+            
+            # Together AI errors
+            if hasattr(together.error, 'ServiceUnavailableError') and isinstance(e, together.error.ServiceUnavailableError):
+                is_retryable = True
+            elif hasattr(together.error, 'RateLimitError') and isinstance(e, together.error.RateLimitError):
+                is_retryable = True
+            elif hasattr(together.error, 'APITimeoutError') and isinstance(e, together.error.APITimeoutError):
+                is_retryable = True
+            elif hasattr(together.error, 'APIConnectionError') and isinstance(e, together.error.APIConnectionError):
+                is_retryable = True
+            # Fallback to checking class name for Together AI errors
+            elif hasattr(e, '__class__'):
+                error_name = e.__class__.__name__
+                if any(err in error_name for err in ['ServiceUnavailableError', 'RateLimitError', 'APITimeoutError', 'APIConnectionError']):
+                    is_retryable = True
+            
+            # OpenAI errors  
+            if isinstance(e, openai.RateLimitError):
+                is_retryable = True
+            elif isinstance(e, openai.APITimeoutError):
+                is_retryable = True
+            elif isinstance(e, openai.APIConnectionError):
+                is_retryable = True
+            elif isinstance(e, openai.InternalServerError):
+                is_retryable = True
+            elif isinstance(e, openai.APIError):
+                # Check for specific status codes
+                if hasattr(e, 'status_code'):
+                    if e.status_code in [429, 500, 502, 503, 504]:
+                        is_retryable = True
+                        
+            # Check error message for common patterns
+            if '503' in error_message or 'service unavailable' in error_message:
+                is_retryable = True
+            elif '429' in error_message or 'rate limit' in error_message:
+                is_retryable = True
+            elif 'timeout' in error_message:
+                is_retryable = True
+            elif 'connection' in error_message and 'error' in error_message:
+                is_retryable = True
+                
+            if not is_retryable:
+                logger.error(f"Non-retryable error: {e}")
+                raise
+            
+            if attempt == max_retries:
+                logger.error(f"Max retries ({max_retries}) exceeded. Last error: {e}")
+                raise
+            
+            # Calculate delay with exponential backoff
+            delay = min(base_delay * (exponential_base ** attempt), max_delay)
+            
+            # Add jitter if enabled
+            if jitter:
+                delay = delay * (0.5 + random.random())
+            
+            logger.warning(
+                f"Attempt {attempt + 1}/{max_retries + 1} failed with {error_name if 'error_name' in locals() else type(e).__name__}: {e}. "
+                f"Retrying in {delay:.2f} seconds..."
+            )
+            
+            await asyncio.sleep(delay)
+    
+    # This should never be reached, but just in case
+    if last_exception:
+        raise last_exception
+    raise RuntimeError("Unexpected error in retry logic")
 
 
 @dataclass
@@ -38,6 +151,11 @@ class Client(ABC):
     api_key: str
     model: str
     max_logprobs: int
+    max_retries: int = 5
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    exponential_base: float = 2.0
+    jitter: bool = True
 
     @abstractmethod
     async def generate(
@@ -64,11 +182,18 @@ OPENAI_PRICING = {
 class OpenAIClient(Client):
     max_logprobs: int = 20
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, max_retries: int = 5, 
+                 base_delay: float = 1.0, max_delay: float = 60.0,
+                 exponential_base: float = 2.0, jitter: bool = True):
         self.client = openai.AsyncOpenAI(api_key=api_key)
         if model not in OPENAI_MODELS:
             raise ValueError(f"Invalid model: {model}. Available models: {list(OPENAI_MODELS.keys())}")
         self.model_name = OPENAI_MODELS[model]
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.exponential_base = exponential_base
+        self.jitter = jitter
 
     async def generate(self, messages: list[dict[str, str]], response_model: Optional[Type[T]] = None, **kwargs) -> Response:
         """Async generation with optional structured output."""
@@ -80,22 +205,35 @@ class OpenAIClient(Client):
         if "top_logprobs" not in kwargs and kwargs.get("logprobs"):
             kwargs["top_logprobs"] = self.max_logprobs
 
-        response = None
+        # Wrap API calls in retry logic
+        async def _make_api_call():
+            if response_model:
+                return await self.client.beta.chat.completions.parse(
+                    model=self.model_name,
+                    messages=messages,
+                    response_format=response_model,
+                    **kwargs
+                )
+            else:
+                return await self.client.chat.completions.create(
+                    model=self.model_name, 
+                    messages=messages, 
+                    **kwargs
+                )
+        
+        # Execute with retry
+        response = await retry_with_exponential_backoff(
+            _make_api_call,
+            max_retries=self.max_retries,
+            base_delay=self.base_delay,
+            max_delay=self.max_delay,
+            exponential_base=self.exponential_base,
+            jitter=self.jitter
+        )
+        
         if response_model:
-            response = await self.client.beta.chat.completions.parse(
-                model=self.model_name,
-                messages=messages,
-                response_format=response_model,
-                **kwargs
-            )
             structured_response = response.choices[0].message.parsed
-        else:
-            response = await self.client.chat.completions.create(
-                model=self.model_name, 
-                messages=messages, 
-                **kwargs
-            )
-
+        
         text = response.choices[0].message.content or ""
         
         if response.choices[0].logprobs and response.choices[0].logprobs.content:
@@ -144,7 +282,9 @@ TOGETHERAI_PRICING = {
 class TogetherAIClient(Client):
     max_logprobs: int = 5
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, max_retries: int = 5,
+                 base_delay: float = 1.0, max_delay: float = 60.0,
+                 exponential_base: float = 2.0, jitter: bool = True):
         self.client = together.AsyncTogether(api_key=api_key)
         if model not in TOGETHERAI_MODELS:
             raise ValueError(f"Invalid model: {model}. Available models: {list(TOGETHERAI_MODELS.keys())}")
@@ -152,6 +292,11 @@ class TogetherAIClient(Client):
         # Llama 3.2 doesn't support alternatives, so set max to 1
         if "11B" in self.model_name:
             self.max_logprobs = 1
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.exponential_base = exponential_base
+        self.jitter = jitter
 
     async def generate(self, messages: list[dict[str, str]], response_model: Optional[Type[T]] = None, **kwargs) -> Response:
         """Async generation with optional structured output."""
@@ -168,11 +313,24 @@ class TogetherAIClient(Client):
                 "schema": response_model.model_json_schema(),
             }
 
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            **kwargs
+        # Wrap API call in retry logic
+        async def _make_api_call():
+            return await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                **kwargs
+            )
+        
+        # Execute with retry
+        response = await retry_with_exponential_backoff(
+            _make_api_call,
+            max_retries=self.max_retries,
+            base_delay=self.base_delay,
+            max_delay=self.max_delay,
+            exponential_base=self.exponential_base,
+            jitter=self.jitter
         )
+        
         if len(response.choices) == 0:
             raise Exception(f"No response choices from model: {response}")
 

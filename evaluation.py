@@ -1,8 +1,11 @@
+import os
 import asyncio
 import numpy as np
 import torch
 import wandb
 import argparse
+import json
+from pathlib import Path
 from settings import settings
 from torch.nn.functional import mse_loss
 from tqdm import tqdm
@@ -17,7 +20,8 @@ from utils.io import (
     save_metrics_to_wandb,
     save_explanations_to_wandb,
     load_activation_data_from_wandb,
-    load_metrics_from_wandb
+    load_metrics_from_wandb,
+    load_explanations_from_wandb
 )
 from utils.enums import SAEType
 from utils.metrics import explained_variance
@@ -36,8 +40,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
     """
     
     # Set Wandb cache directories to use output_path instead of home directory
-    import os
-    from pathlib import Path
     output_path_abs = Path(args.output_path).absolute()
     output_path_abs.mkdir(parents=True, exist_ok=True)
     
@@ -52,12 +54,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
     
     print(f"Using Wandb cache directory: {wandb_cache_dir}")
     print(f"Using temp directory: {output_path_abs}")
-    
-    # OpenAI model mappings
-    # OPENAI_MODELS = {
-    #     "gpt-4o-mini": "gpt-4o-mini-07-18",
-    #     "gpt-4o": "gpt-4o-2024-11-20",
-    # }
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     wandb.login(key=settings.wandb_api_key)
@@ -128,6 +124,20 @@ def run_evaluation(args: argparse.Namespace) -> None:
         except Exception as e:
             print(f"No existing metrics found: {e}")
             print("Will compute metrics from scratch")
+
+        # Try to load existing explanations if needed
+        all_explanation_scores = None
+        if args.generate_explanations:
+            try:
+                loaded_explanations = load_explanations_from_wandb(run_id, project=args.wandb_project, output_path=args.output_path)
+                if loaded_explanations is not None and not args.force_recompute:
+                    all_explanation_scores = loaded_explanations
+                    print(f"Loaded existing explanations from Wandb")
+                elif loaded_explanations is not None and args.force_recompute:
+                    print(f"Found existing explanations but --force_recompute is set, will recompute")
+            except Exception as e:
+                print(f"No existing explanations found: {e}")
+                print("Will compute explanations from scratch")
         if accumulated_data is None or len(metrics) == 0:
             print(f"Obtaining features for {run_id}")
 
@@ -151,7 +161,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     'mse': 0.0,
                     'explained_variance': 0.0,
                 }
-            
+
             total_tokens = 0
             for batch in tqdm(eval_loader, desc="Processing batches"):
                 token_ids = batch[config.data.column_name].to(device)
@@ -197,11 +207,11 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     
                     # Get activations based on SAE type
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
-                        acts = sae_output.c
+                        acts = sae_output.z
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:
-                        acts = sae_output.mask if hasattr(sae_output, 'mask') else sae_output.c
+                        acts = sae_output.mask
                     elif config.saes.sae_type == SAEType.TOPK:
                         acts = sae_output.code
                     else:
@@ -285,12 +295,12 @@ def run_evaluation(args: argparse.Namespace) -> None:
         
         all_run_metrics.append(run_metrics)
         
-        if args.generate_explanations:
+        if args.generate_explanations and all_explanation_scores is None:
             if accumulated_data is None:
                 print("No activation data found, skipping explanation generation")
                 continue
             
-            # Initialize dict to store all explanation scores across runs
+            # Initialize dict to store all explanation scores for this run
             all_explanation_scores = {}
 
             # Initialize explainer
@@ -408,41 +418,64 @@ def run_evaluation(args: argparse.Namespace) -> None:
             except Exception as e:
                 print(f"Warning: Failed to upload explanations to Wandb: {e}")
     
-        # Finish the current wandb run before moving to the next one
-        wandb.finish()
-
-    # Save and display scores if they were computed
-    if args.generate_explanations and all_explanation_scores:
-        print("\n" + "=" * 60)
-        print("EXPLANATION SCORES SUMMARY")
-        print("=" * 60)
-        
-        # Save scores to JSON
-        import json
-        scores_path = Path(args.output_path) / "explanation_scores.json"
-        with open(scores_path, 'w') as f:
-            json.dump(all_explanation_scores, f, indent=2)
-        print(f"\nScores saved to: {scores_path}")
-        
-        # Display summary statistics
-        if all_explanation_scores:
-            detection_scores = [s['detection_score'] for s in all_explanation_scores if s['detection_score'] is not None]
-            fuzz_scores = [s['fuzz_score'] for s in all_explanation_scores if s['fuzz_score'] is not None]
-            # embedding_scores = [s['embedding_score'] for s in all_explanation_scores if s['embedding_score'] is not None]
+        # Display explanation summary for this run if explanations were generated or loaded
+        if args.generate_explanations and all_explanation_scores:
+            print("\n" + "=" * 60)
+            print(f"EXPLANATION SCORES SUMMARY - Run {run_id}")
+            print("=" * 60)
             
-            print("\nScore Statistics:")
-            if detection_scores:
-                print(f"  Detection: mean={np.mean(detection_scores):.3f}, std={np.std(detection_scores):.3f}, n={len(detection_scores)}")
-            if fuzz_scores:
-                print(f"  Fuzz:      mean={np.mean(fuzz_scores):.3f}, std={np.std(fuzz_scores):.3f}, n={len(fuzz_scores)}")
+            # Save scores to JSON for this run
+            scores_path = Path(args.output_path) / f"explanation_scores_{run_id}.json"
+            with open(scores_path, 'w') as f:
+                json.dump(all_explanation_scores, f, indent=2)
+            print(f"\nScores saved to: {scores_path}")
+            
+            # Display summary statistics by layer
+            print("\nScore Statistics by Layer:")
+            all_scores = []  # For overall top explanations
+            
+            for sae_pos, scores_list in all_explanation_scores.items():
+                if not scores_list:
+                    continue
+                    
+                # Get scores for this layer
+                layer_detection_scores = [s['detection_score'] for s in scores_list if s['detection_score'] is not None]
+                layer_fuzz_scores = [s['fuzz_score'] for s in scores_list if s['fuzz_score'] is not None]
+                
+                print(f"\n  {sae_pos}:")
+                print(f"    Total neurons: {len(scores_list)}")
+                if layer_detection_scores:
+                    print(f"    Detection: mean={np.mean(layer_detection_scores):.3f}, std={np.std(layer_detection_scores):.3f}, n={len(layer_detection_scores)}")
+                if layer_fuzz_scores:
+                    print(f"    Fuzz:      mean={np.mean(layer_fuzz_scores):.3f}, std={np.std(layer_fuzz_scores):.3f}, n={len(layer_fuzz_scores)}")
+                
+                # Add to overall list with sae_pos for top explanations display
+                for score_dict in scores_list:
+                    score_dict_with_pos = score_dict.copy()
+                    score_dict_with_pos['sae_pos'] = sae_pos
+                    all_scores.append(score_dict_with_pos)
 
-            # Display top scoring explanations
-            print("\nTop 5 explanations by Detection score:")
-            sorted_by_detection = sorted([s for s in all_explanation_scores if s['detection_score'] is not None], 
+            # Display overall statistics
+            overall_detection_scores = [s['detection_score'] for s in all_scores if s['detection_score'] is not None]
+            overall_fuzz_scores = [s['fuzz_score'] for s in all_scores if s['fuzz_score'] is not None]
+            
+            print(f"\n  Overall (All Layers):")
+            print(f"    Total neurons: {len(all_scores)}")
+            if overall_detection_scores:
+                print(f"    Detection: mean={np.mean(overall_detection_scores):.3f}, std={np.std(overall_detection_scores):.3f}, n={len(overall_detection_scores)}")
+            if overall_fuzz_scores:
+                print(f"    Fuzz:      mean={np.mean(overall_fuzz_scores):.3f}, std={np.std(overall_fuzz_scores):.3f}, n={len(overall_fuzz_scores)}")
+
+            # Display top scoring explanations across all layers
+            print("\nTop 5 explanations by Detection score (across all layers):")
+            sorted_by_detection = sorted([s for s in all_scores if s['detection_score'] is not None], 
                                         key=lambda x: x['detection_score'], reverse=True)[:5]
             for i, score_entry in enumerate(sorted_by_detection, 1):
                 print(f"  {i}. Neuron {score_entry['neuron_idx']} ({score_entry['sae_pos']}): {score_entry['detection_score']:.3f}")
                 print(f"     {score_entry['explanation'][:100]}...")
+    
+        # Finish the current wandb run before moving to the next one
+        wandb.finish()
 
     # Create pareto plots after processing all runs
     create_pareto_plots(all_run_metrics)
