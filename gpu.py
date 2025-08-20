@@ -108,32 +108,72 @@ def allocate_memory_and_compute(gpu_id: int, memory_gb: float = 30.0, target_uti
                 print(f"[GPU {gpu_id}] Warning: Could only allocate {i*3:.1f} GB")
                 break
         
-        # Create computation tensors for maintaining utilization
-        matrix_size = 4096  # Size for matrix operations
+        # Create larger computation tensors for more intensive operations
+        # Increased matrix sizes for better GPU utilization
+        matrix_size = 8192  # Doubled from 4096
         a = torch.randn(matrix_size, matrix_size, device=device, dtype=torch.float32)
         b = torch.randn(matrix_size, matrix_size, device=device, dtype=torch.float32)
+        c = torch.randn(matrix_size, matrix_size, device=device, dtype=torch.float32)
+        
+        # Additional tensors for varied operations
+        d = torch.randn(matrix_size // 2, matrix_size, device=device, dtype=torch.float32)
+        e = torch.randn(matrix_size, matrix_size // 2, device=device, dtype=torch.float32)
         
         print(f"[GPU {gpu_id}] Starting computation loop (target: {target_util*100:.0f}% utilization)...")
         
-        # Duty cycle control for target utilization
-        # Run computation for 'active_time', then sleep for 'sleep_time'
-        active_time = target_util  # seconds of active computation
-        sleep_time = 1.0 - target_util  # seconds of sleep
+        # More aggressive duty cycle for 50% utilization
+        # Adjust timing based on actual vs target utilization
+        compute_duration = 0.7  # Start with 70% active time
+        sleep_duration = 0.3    # 30% sleep time
         
         iteration = 0
+        last_util_check = time.time()
+        adjustment_factor = 1.0
+        
         while not shutdown_flag.is_set():
             iteration += 1
             
-            # Active computation phase
+            # Active computation phase with multiple operations
             start_time = time.time()
-            while time.time() - start_time < active_time:
-                # Perform matrix multiplication to generate load
-                c = torch.matmul(a, b)
-                # Add some variation to prevent optimization
-                a = a * 0.999 + torch.randn_like(a) * 0.001
+            operations_count = 0
+            
+            while time.time() - start_time < compute_duration * adjustment_factor:
+                # Perform various matrix operations for intensive GPU usage
+                # Mix of different operations to prevent optimization
+                
+                # Heavy matrix multiplication
+                result1 = torch.matmul(a, b)
+                
+                # Additional operations for more consistent load
+                result2 = torch.matmul(c, result1)
+                
+                # Element-wise operations
+                a = a * 0.9999 + torch.randn_like(a) * 0.0001
+                b = b * 0.9999 + torch.randn_like(b) * 0.0001
+                
+                # More complex operations
+                if operations_count % 3 == 0:
+                    # Batch matrix multiplication with smaller matrices
+                    result3 = torch.matmul(d, e)
+                    # SVD or eigenvalue decomposition (very intensive)
+                    if operations_count % 9 == 0:
+                        try:
+                            U, S, V = torch.svd(result3[:1024, :1024])
+                        except:
+                            pass  # Skip if SVD fails
+                
+                # Convolution-like operation
+                if operations_count % 5 == 0:
+                    kernel = torch.randn(64, 64, device=device)
+                    conv_result = torch.nn.functional.conv2d(
+                        result1[:64, :64].unsqueeze(0).unsqueeze(0),
+                        kernel.unsqueeze(0).unsqueeze(0)
+                    )
+                
+                operations_count += 1
                 
                 # Periodically touch the allocated memory to keep it active
-                if iteration % 100 == 0:
+                if iteration % 50 == 0:
                     for tensor in tensors:
                         tensor += 0.00001
                 
@@ -142,12 +182,33 @@ def allocate_memory_and_compute(gpu_id: int, memory_gb: float = 30.0, target_uti
                     break
             
             # Sleep phase to control utilization
-            if sleep_time > 0 and not shutdown_flag.is_set():
-                time.sleep(sleep_time)
+            if sleep_duration * adjustment_factor > 0 and not shutdown_flag.is_set():
+                time.sleep(sleep_duration * adjustment_factor)
             
-            # Print status every 10 iterations
-            if iteration % 10 == 0:
-                print(f"[GPU {gpu_id}] Running... Iteration {iteration}")
+            # Dynamic adjustment based on measured utilization
+            if time.time() - last_util_check > 10:  # Check every 10 seconds
+                current_gpu_info = get_gpu_info()
+                for gid, util, mem in current_gpu_info:
+                    if gid == gpu_id:
+                        current_util = util / 100.0
+                        # Adjust duty cycle based on current vs target
+                        if current_util < target_util - 0.05:  # Below target
+                            adjustment_factor = min(1.5, adjustment_factor * 1.1)
+                            if iteration % 5 == 0:
+                                print(f"[GPU {gpu_id}] Util: {current_util*100:.1f}% - Increasing load (factor: {adjustment_factor:.2f})")
+                        elif current_util > target_util + 0.05:  # Above target
+                            adjustment_factor = max(0.5, adjustment_factor * 0.9)
+                            if iteration % 5 == 0:
+                                print(f"[GPU {gpu_id}] Util: {current_util*100:.1f}% - Decreasing load (factor: {adjustment_factor:.2f})")
+                        else:
+                            if iteration % 5 == 0:
+                                print(f"[GPU {gpu_id}] Util: {current_util*100:.1f}% - On target!")
+                        break
+                last_util_check = time.time()
+            
+            # Print status every 20 iterations
+            if iteration % 20 == 0:
+                print(f"[GPU {gpu_id}] Running... Iteration {iteration}, Adjustment: {adjustment_factor:.2f}")
         
         print(f"[GPU {gpu_id}] Shutting down...")
         
