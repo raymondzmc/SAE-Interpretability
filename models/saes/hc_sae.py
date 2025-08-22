@@ -137,7 +137,8 @@ class HardConcreteSAE(BaseSAE):
         self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
 
-        self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
+        self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
+        self.decoder_bias = torch.nn.Parameter(torch.zeros(input_size))
 
         # Register beta as a buffer to allow updates during training without being a model parameter
         # Create on CPU first, will be moved to correct device by .to() call

@@ -1,2 +1,2 @@
 sparsity_coeff: [0.01, 0.005, 0.001, 0.0005, 0.0001]
-magnitude_activation: ["none"]
+magnitude_activation: ["relu"]

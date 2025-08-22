@@ -1,2 +1,2 @@
 rho: [0.001, 0.0005, 0.0001, 0.00005, 0.00001]
-magnitude_activation: ["none"]
+magnitude_activation: ["relu"]
