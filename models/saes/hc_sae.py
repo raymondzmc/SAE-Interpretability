@@ -149,7 +149,7 @@ class HardConcreteSAE(BaseSAE):
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
 
         if tied_encoder_init:
-            self.encoder.weight.data.copy_(self.decoder.weight.data.T)
+            self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
         """
