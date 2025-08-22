@@ -8,5 +8,4 @@ CUDA_VISIBLE_DEVICES=1 python run_experiments.py \
 
 CUDA_VISIBLE_DEVICES=1 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-hardconcrete \
---n_eval_samples 10000 \
---filter_runs_by_name magnitude_activation_relu
+--filter_runs_by_name relu_lagrangian_hardconcrete

@@ -135,11 +135,16 @@ def create_experiment_config(base_config: Dict[str, Any], params: Dict[str, Any]
     # Define where different parameter types go
     top_level_params = {'lr', 'seed', 'gradient_accumulation_steps', 'max_grad_norm', 'lr_schedule', 
                        'min_lr_factor', 'warmup_samples', 'cooldown_samples', 'log_every_n_grad_steps',
-                       'eval_every_n_samples', 'save_every_n_samples', 'wandb_project'}
+                       'eval_every_n_samples', 'save_every_n_samples', 'wandb_project', 'wandb_run_name', 'wandb_tags'}
     
     data_params = {'n_train_samples', 'n_eval_samples', 'train_batch_size', 'eval_batch_size', 
                   'context_length', 'dataset_name', 'tokenizer_name'}
     
+    # Do not include wandb_run_name and wandb_tags in the parameter string
+    params.pop('wandb_run_name', None)
+    params.pop('wandb_project', None)
+    params.pop('wandb_tags', None)
+
     # Apply parameter overrides
     for param_name, value in params.items():
         if param_name in top_level_params:
@@ -156,9 +161,6 @@ def create_experiment_config(base_config: Dict[str, Any], params: Dict[str, Any]
     
     # Ensure required SAE parameters exist
     saes_section = experiment_config.setdefault('saes', {})
-    if 'mse_coeff' not in saes_section:
-        saes_section['mse_coeff'] = 1.0
-    
     # Create run name from parameters
     param_string_parts = []
     for param_name, value in params.items():
@@ -170,14 +172,14 @@ def create_experiment_config(base_config: Dict[str, Any], params: Dict[str, Any]
             param_string_parts.append(f"{param_name}_{value}")
     
     param_string = "_".join(param_string_parts)
-    sae_type = saes_section.get('sae_type', 'unknown')
+    run_name = experiment_config.get('wandb_run_name') or saes_section.get('sae_type')
     
     if param_string:
-        experiment_config['wandb_run_name'] = f"{sae_type}_{param_string}"
-        experiment_config['wandb_tags'] = [str(sae_type)] + [f"{k}_{v}" for k, v in params.items()]
+        experiment_config['wandb_run_name'] = f"{run_name}_{param_string}"
+        experiment_config['wandb_tags'] = [str(run_name)] + [f"{k}_{v}" for k, v in params.items()]
     else:
-        experiment_config['wandb_run_name'] = f"{sae_type}_default"
-        experiment_config['wandb_tags'] = [str(sae_type)]
+        experiment_config['wandb_run_name'] = f"{run_name}_default"
+        experiment_config['wandb_tags'] = [str(run_name)]
     
     # Add experiment metadata
     experiment_config['_experiment_id'] = f"exp_{experiment_id:03d}"
