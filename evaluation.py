@@ -207,6 +207,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     
                     # Get activations based on SAE type
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
+                        acts = sae_output
+                    elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
                         acts = sae_output.z
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
