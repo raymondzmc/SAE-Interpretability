@@ -139,11 +139,6 @@ def create_experiment_config(base_config: Dict[str, Any], params: Dict[str, Any]
     
     data_params = {'n_train_samples', 'n_eval_samples', 'train_batch_size', 'eval_batch_size', 
                   'context_length', 'dataset_name', 'tokenizer_name'}
-    
-    # Do not include wandb_run_name and wandb_tags in the parameter string
-    params.pop('wandb_run_name', None)
-    params.pop('wandb_project', None)
-    params.pop('wandb_tags', None)
 
     # Apply parameter overrides
     for param_name, value in params.items():
@@ -164,13 +159,14 @@ def create_experiment_config(base_config: Dict[str, Any], params: Dict[str, Any]
     # Create run name from parameters
     param_string_parts = []
     for param_name, value in params.items():
+        if param_name in ['wandb_run_name', 'wandb_project', 'wandb_tags']:
+            continue
         if isinstance(value, bool):
             param_string_parts.append(f"{param_name}_{str(value).lower()}")
         elif isinstance(value, float) and value < 0.01:
             param_string_parts.append(f"{param_name}_{value:.0e}")
         else:
             param_string_parts.append(f"{param_name}_{value}")
-    
     param_string = "_".join(param_string_parts)
     run_name = experiment_config.get('wandb_run_name') or saes_section.get('sae_type')
     
