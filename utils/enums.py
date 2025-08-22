@@ -5,6 +5,7 @@ class SAEType(str, Enum):
     """Enum for different SAE types."""
     RELU = "relu"
     HARD_CONCRETE = "hard_concrete"
+    LAGRANGIAN_HARD_CONCRETE = "lagrangean_hard_concrete"
     GATED = "gated"
     GATED_HARD_CONCRETE = "gated_hard_concrete"
     TOPK = "topk"

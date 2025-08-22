@@ -14,13 +14,11 @@ import torch
 import yaml
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import logging
 import copy
-import sys
 from itertools import product
 from run import run
-import tempfile
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -499,10 +497,6 @@ def main():
                         help="Override max_experiments from sweep config")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Directory to save experiment configs (for inspection)")
-    # parser.add_argument("--sequential", action="store_true",
-    #                     help="Run experiments sequentially (no multiprocessing) for easier debugging")
-    # parser.add_argument("--no_tmux", action="store_true",
-    #                     help="Disable tmux sessions (use direct subprocess calls instead)")
     
     args = parser.parse_args()
     
@@ -548,34 +542,7 @@ def main():
     for i, params in enumerate(param_combinations):
         config = create_experiment_config(base_config, params, i)
         experiment_configs.append(config)
-    
-    # Check tmux availability
-    # use_tmux = not args.no_tmux
-    # if use_tmux:
-    #     try:
-    #         subprocess.run(["tmux", "-V"], capture_output=True, check=True)
-    #         logger.info("Tmux available - experiments will run in separate tmux sessions")
-    #     except (subprocess.CalledProcessError, FileNotFoundError):
-    #         logger.warning("Tmux not available - falling back to direct subprocess calls")
-    #         use_tmux = False
-    # else:
-    #     logger.info("Tmux disabled - using direct subprocess calls")
-    
-    # print(f"\nExperiment Overview:")
-    # print(f"  Base config: {base_config_path}")
-    # print(f"  Sweep config: {sweep_config_path}")
-    # print(f"  SAE type: {sae_type}")
-    # print(f"  Total experiments: {len(experiment_configs)}")
-    # print(f"  Tmux sessions: {'enabled' if use_tmux else 'disabled'}")
-    
-    # if use_tmux and not args.dry_run:
-    #     print(f"\n📺 Experiment Monitoring:")
-    #     print(f"  Each experiment runs in its own tmux session")
-    #     print(f"  Session names: exp_experiment_XXX_device")
-    #     print(f"  Monitor individual experiments: tmux attach -t <session_name>")
-    #     print(f"  List all sessions: tmux list-sessions")
-    #     print(f"  Kill a session: tmux kill-session -t <session_name>")
-    
+
     if args.dry_run:
         print(f"\nDevice distribution (dry run):")
         print(f"  {args.device}: {len(experiment_configs)} experiments")
@@ -633,18 +600,6 @@ def main():
         run(config, device=device)
     total_duration = time.time() - start_time
     logger.info(f"Total duration: {total_duration:.1f}s ({total_duration/60:.1f} minutes)")
-    
-    # Run experiments
-    # start_time = time.time()
-    # logger.info("Starting experiment execution...")
-    
-    # results = run_experiments_on_devices(config_paths, device_ids, sequential=args.sequential, use_tmux=use_tmux)
-    
-    # total_duration = time.time() - start_time
-    
-    # # Print comprehensive summary
-    # print_experiment_summary(results, device_ids, total_duration)
-
 
 if __name__ == "__main__":
     main()

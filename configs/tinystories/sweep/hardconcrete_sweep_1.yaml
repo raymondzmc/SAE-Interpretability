@@ -1,2 +1,0 @@
-sparsity_coeff: [5e-4, 1e-4, 5e-5]
-apply_relu_to_magnitude: [true]

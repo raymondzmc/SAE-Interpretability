@@ -24,7 +24,7 @@ plt.rcParams['font.size'] = 9
 
 def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[str, List[Dict]]:
     """
-    Collect metrics data for all SAE types including HardConcrete.
+    Collect metrics data for all SAE types including HardConcrete and Top-K.
     
     Returns:
         Dictionary with SAE type keys, each containing list of run data
@@ -42,7 +42,8 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[s
     data = {
         'relu': [],
         'gated': [],
-        'hardconcrete': []  # Single HardConcrete type
+        'hardconcrete': [],  # HardConcrete type
+        'topk': []  # Top-K type
     }
     
     # Track layer names
@@ -53,7 +54,9 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[s
         
         # Determine SAE type
         sae_type = None
-        if 'relu' in name_lower and 'apply_relu_to_magnitude_true' not in name_lower:
+        if 'topk' in name_lower or 'top-k' in name_lower or 'top_k' in name_lower:
+            sae_type = 'topk'
+        elif 'relu' in name_lower and 'apply_relu_to_magnitude_true' not in name_lower:
             sae_type = 'relu'
         elif 'gated' in name_lower and 'apply_relu_to_magnitude_true' not in name_lower:
             sae_type = 'gated'
@@ -73,18 +76,48 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m") -> Dict[s
         if metrics:
             # Extract sparsity coefficient from run name or config
             sparsity_coeff = None
+            k_value = None
+            
+            # Try to extract sparsity coefficient for any SAE type
             if 'sparsity_coeff_' in run.name:
-                coeff_str = run.name.split('sparsity_coeff_')[1]
+                coeff_str = run.name.split('sparsity_coeff_')[1].split('_')[0]
                 try:
-                    sparsity_coeff = float(coeff_str.replace('e-', 'e-'))
+                    # Handle scientific notation
+                    coeff_str = coeff_str.replace('_', '.')  # In case underscore is used for decimal
+                    sparsity_coeff = float(coeff_str)
                 except:
                     sparsity_coeff = None
+            
+            # For Top-K, also extract k value
+            if sae_type == 'topk':
+                # Try to extract k from run name first
+                if '_k_' in name_lower:
+                    try:
+                        k_str = name_lower.split('_k_')[1].split('_')[0]
+                        k_value = int(k_str)
+                    except:
+                        pass
+                
+                # If not found in name, try to load from model
+                if k_value is None:
+                    try:
+                        print(f"    Loading Top-K model to extract k value...")
+                        model = SAETransformer.from_wandb(f"{project}/{run.id}")
+                        if hasattr(model.sae_config, 'k'):
+                            k_value = model.sae_config.k
+                        # Clean up model
+                        del model
+                        import torch
+                        torch.cuda.empty_cache()
+                    except Exception as e:
+                        print(f"    Could not extract k value: {e}")
             
             # Store per-layer metrics
             run_data = {
                 'run_name': run.name,
                 'run_id': run.id,
                 'sparsity_coeff': sparsity_coeff,
+                'k_value': k_value,
                 'layers': {}
             }
             
@@ -153,8 +186,9 @@ def find_pareto_frontier(x_values: np.ndarray, y_values: np.ndarray,
 
 def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str], 
                            output_dir: Path = Path("plots"),
-                           max_mse: float = 0.01, max_l0: float = 250,
-                           min_mse: float = 0.0, min_l0: float = 0.0):
+                           max_mse: float = float('inf'), max_l0: float = float('inf'),
+                           min_mse: float = 0.0, min_l0: float = 0.0,
+                           use_log_scale: bool = False):
     """
     Create Pareto curve plots for all SAE types.
     
@@ -162,32 +196,39 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         data: Dictionary with SAE type data
         layers: List of layer names
         output_dir: Output directory for plots
-        max_mse: Maximum MSE threshold (default: 0.01 for HardConcrete)
-        max_l0: Maximum L0 threshold (default: 250)
+        max_mse: Maximum MSE threshold (default: inf - no filtering)
+        max_l0: Maximum L0 threshold (default: inf - no filtering)
+        use_log_scale: Whether to use log scale for axes (default: False)
     """
     output_dir.mkdir(exist_ok=True)
     
-    print(f"\nFiltering: MSE in [{min_mse}, {max_mse}], L0 in [{min_l0}, {max_l0}]")
+    if max_mse == float('inf') and max_l0 == float('inf'):
+        print(f"\nPlotting all data points (no filtering)")
+    else:
+        print(f"\nFiltering: MSE in [{min_mse}, {max_mse}], L0 in [{min_l0}, {max_l0}]")
     
     # Color scheme for different SAE types - more distinct colors
     colors = {
         'relu': '#1f77b4',           # Blue
         'gated': '#ff7f0e',          # Orange  
-        'hardconcrete': '#2ca02c'    # Green
+        'hardconcrete': '#2ca02c',   # Green
+        'topk': '#d62728'            # Red
     }
     
     # Marker styles - more distinct shapes
     markers = {
         'relu': 'o',        # Circle
         'gated': 's',       # Square
-        'hardconcrete': '^' # Triangle up
+        'hardconcrete': '^', # Triangle up
+        'topk': 'D'         # Diamond
     }
     
     # Labels for legend
     labels = {
         'relu': 'ReLU',
         'gated': 'Gated',
-        'hardconcrete': 'HardConcrete'
+        'hardconcrete': 'HardConcrete',
+        'topk': 'Top-K'
     }
     
     # Track filtered statistics
@@ -204,13 +245,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 1: MSE vs L0 (minimize both)
         ax1 = axes[0]
-        for sae_type in ['relu', 'gated', 'hardconcrete']:
+        for sae_type in ['relu', 'gated', 'hardconcrete', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
                 mse_values = []
                 run_names = []
-                sparsity_coeffs = []
+                param_labels = []  # Will store sparsity_coeff for HC or k for Top-K
                 
                 for run_data in data[sae_type]:
                     if layer_name in run_data['layers']:
@@ -222,7 +263,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                             l0_values.append(l0)
                             mse_values.append(mse)
                             run_names.append(run_data['run_name'])
-                            sparsity_coeffs.append(run_data.get('sparsity_coeff', None))
+                            
+                            # Get appropriate label based on SAE type
+                            if sae_type == 'topk':
+                                param_labels.append(run_data.get('k_value', None))
+                            else:
+                                # For all other SAE types, use sparsity coefficient
+                                param_labels.append(run_data.get('sparsity_coeff', None))
                         else:
                             layer_filtered += 1
                             filtered_by_type[sae_type] += 1
@@ -242,17 +289,23 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                            color=colors[sae_type], marker=markers[sae_type],
                            alpha=0.7, s=60, label=f'{labels[sae_type]} runs')
                 
-                # Add sparsity coefficient labels
-                for i, (x, y, coeff) in enumerate(zip(l0_values, mse_values, sparsity_coeffs)):
-                    if coeff is not None:
-                        # Format coefficient for display
-                        if coeff >= 0.01:
-                            label = f'{coeff:.2f}'
+                # Add parameter labels for all points
+                for i, (x, y, param) in enumerate(zip(l0_values, mse_values, param_labels)):
+                    if param is not None:
+                        # Format label for display
+                        if sae_type == 'topk':
+                            label = f'k={param}'
                         else:
-                            label = f'{coeff:.0e}'
+                            # For sparsity coefficients
+                            if param >= 0.01:
+                                label = f'{param:.2f}'
+                            elif param >= 0.001:
+                                label = f'{param:.3f}'
+                            else:
+                                label = f'{param:.0e}'
                         ax1.annotate(label, (x, y), 
                                    xytext=(3, 3), textcoords='offset points',
-                                   fontsize=7, alpha=0.7, color=colors[sae_type])
+                                   fontsize=6, alpha=0.6, color=colors[sae_type])
                 
                 # Highlight and connect Pareto frontier points
                 if np.any(is_pareto):
@@ -274,17 +327,20 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         ax1.set_xlabel('L0 Sparsity', fontsize=11)
         ax1.set_ylabel('MSE', fontsize=11)
         ax1.set_title('MSE vs L0 Sparsity\n(Lower is better for both)', fontsize=12)
+        if use_log_scale:
+            ax1.set_xscale('log')
+            ax1.set_yscale('log')
         ax1.legend(loc='upper right', fontsize=8)
-        ax1.grid(True, alpha=0.3)
+        ax1.grid(True, alpha=0.3, which='both')
         
         # Plot 2: Explained Variance vs L0 (minimize L0, maximize explained variance)
         ax2 = axes[1]
-        for sae_type in ['relu', 'gated', 'hardconcrete']:
+        for sae_type in ['relu', 'gated', 'hardconcrete', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
                 ev_values = []
-                sparsity_coeffs = []
+                param_labels = []
                 
                 for run_data in data[sae_type]:
                     if layer_name in run_data['layers']:
@@ -296,7 +352,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         if min_l0 <= l0 <= max_l0 and min_mse <= mse <= max_mse:
                             l0_values.append(l0)
                             ev_values.append(ev)
-                            sparsity_coeffs.append(run_data.get('sparsity_coeff', None))
+                            
+                            # Get appropriate label based on SAE type
+                            if sae_type == 'topk':
+                                param_labels.append(run_data.get('k_value', None))
+                            else:
+                                # For all other SAE types, use sparsity coefficient
+                                param_labels.append(run_data.get('sparsity_coeff', None))
                 
                 if not l0_values:
                     continue
@@ -313,17 +375,23 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                            color=colors[sae_type], marker=markers[sae_type],
                            alpha=0.7, s=60, label=f'{labels[sae_type]} runs')
                 
-                # Add sparsity coefficient labels
-                for i, (x, y, coeff) in enumerate(zip(l0_values, ev_values, sparsity_coeffs)):
-                    if coeff is not None:
-                        # Format coefficient for display
-                        if coeff >= 0.01:
-                            label = f'{coeff:.2f}'
+                # Add parameter labels for all points
+                for i, (x, y, param) in enumerate(zip(l0_values, ev_values, param_labels)):
+                    if param is not None:
+                        # Format label for display
+                        if sae_type == 'topk':
+                            label = f'k={param}'
                         else:
-                            label = f'{coeff:.0e}'
+                            # For sparsity coefficients
+                            if param >= 0.01:
+                                label = f'{param:.2f}'
+                            elif param >= 0.001:
+                                label = f'{param:.3f}'
+                            else:
+                                label = f'{param:.0e}'
                         ax2.annotate(label, (x, y), 
                                    xytext=(3, 3), textcoords='offset points',
-                                   fontsize=7, alpha=0.7, color=colors[sae_type])
+                                   fontsize=6, alpha=0.6, color=colors[sae_type])
                 
                 # Highlight and connect Pareto frontier points
                 if np.any(is_pareto):
@@ -345,17 +413,20 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         ax2.set_xlabel('L0 Sparsity', fontsize=11)
         ax2.set_ylabel('Explained Variance', fontsize=11)
         ax2.set_title('Explained Variance vs L0 Sparsity\n(Lower L0 better, Higher EV better)', fontsize=12)
+        if use_log_scale:
+            ax2.set_xscale('log')
+            # Don't use log scale for explained variance as it goes from 0 to 1
         ax2.legend(loc='lower right', fontsize=8)
-        ax2.grid(True, alpha=0.3)
+        ax2.grid(True, alpha=0.3, which='both')
         
         # Plot 3: Alive Dictionary Elements vs L0
         ax3 = axes[2]
-        for sae_type in ['relu', 'gated', 'hardconcrete']:
+        for sae_type in ['relu', 'gated', 'hardconcrete', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
                 alive_values = []
-                sparsity_coeffs = []
+                param_labels = []
                 
                 for run_data in data[sae_type]:
                     if layer_name in run_data['layers']:
@@ -367,7 +438,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         if min_l0 <= l0 <= max_l0 and min_mse <= mse <= max_mse:
                             l0_values.append(l0)
                             alive_values.append(alive)
-                            sparsity_coeffs.append(run_data.get('sparsity_coeff', None))
+                            
+                            # Get appropriate label based on SAE type
+                            if sae_type == 'topk':
+                                param_labels.append(run_data.get('k_value', None))
+                            else:
+                                # For all other SAE types, use sparsity coefficient
+                                param_labels.append(run_data.get('sparsity_coeff', None))
                 
                 if not l0_values:
                     continue
@@ -384,17 +461,23 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                            color=colors[sae_type], marker=markers[sae_type],
                            alpha=0.7, s=60, label=f'{labels[sae_type]} runs')
                 
-                # Add sparsity coefficient labels
-                for i, (x, y, coeff) in enumerate(zip(l0_values, alive_values, sparsity_coeffs)):
-                    if coeff is not None:
-                        # Format coefficient for display
-                        if coeff >= 0.01:
-                            label = f'{coeff:.2f}'
+                # Add parameter labels for all points
+                for i, (x, y, param) in enumerate(zip(l0_values, alive_values, param_labels)):
+                    if param is not None:
+                        # Format label for display
+                        if sae_type == 'topk':
+                            label = f'k={param}'
                         else:
-                            label = f'{coeff:.0e}'
+                            # For sparsity coefficients
+                            if param >= 0.01:
+                                label = f'{param:.2f}'
+                            elif param >= 0.001:
+                                label = f'{param:.3f}'
+                            else:
+                                label = f'{param:.0e}'
                         ax3.annotate(label, (x, y), 
                                    xytext=(3, 3), textcoords='offset points',
-                                   fontsize=7, alpha=0.7, color=colors[sae_type])
+                                   fontsize=6, alpha=0.6, color=colors[sae_type])
                 
                 # Highlight and connect Pareto frontier points
                 if np.any(is_pareto):
@@ -416,13 +499,20 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         ax3.set_xlabel('L0 Sparsity', fontsize=11)
         ax3.set_ylabel('Alive Dictionary Components', fontsize=11)
         ax3.set_title('Alive Dictionary Components vs L0\n(Lower L0 better, Higher alive better)', fontsize=12)
+        if use_log_scale:
+            ax3.set_xscale('log')
+            ax3.set_yscale('log')
         ax3.legend(loc='lower right', fontsize=8)
-        ax3.grid(True, alpha=0.3)
+        ax3.grid(True, alpha=0.3, which='both')
         
         # Adjust layout and save
         layer_display_name = layer_name.replace('.', '_')
-        filter_str = f'MSE ∈ [{min_mse}, {max_mse}], L0 ∈ [{min_l0}, {max_l0}]'
-        plt.suptitle(f'Pareto Curves: All SAE Types - Layer {layer_name}\n(Filtered: {filter_str})', 
+        if max_mse == float('inf') and max_l0 == float('inf'):
+            filter_str = 'No filtering'
+        else:
+            filter_str = f'MSE ∈ [{min_mse}, {max_mse}], L0 ∈ [{min_l0}, {max_l0}]'
+        scale_str = ' (log scale)' if use_log_scale else ''
+        plt.suptitle(f'Pareto Curves: All SAE Types - Layer {layer_name}{scale_str}\n({filter_str})', 
                     fontsize=14, y=1.02)
         plt.tight_layout()
         
@@ -430,7 +520,8 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         output_path = output_dir / f"all_saes_pareto_{layer_display_name}.png"
         plt.savefig(output_path, bbox_inches='tight', dpi=300)
         print(f"  Saved plot to: {output_path}")
-        print(f"  Filtered {layer_filtered} points from this layer")
+        if layer_filtered > 0:
+            print(f"  Filtered {layer_filtered} points from this layer")
         
         # Also save as SVG for vector graphics
         output_path_svg = output_dir / f"all_saes_pareto_{layer_display_name}.svg"
@@ -440,27 +531,32 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         total_filtered += layer_filtered
     
-    print(f"\nTotal points filtered: {total_filtered}")
-    for sae_type, count in filtered_by_type.items():
-        if count > 0:
-            print(f"  {sae_type}: {count} points")
+    if total_filtered > 0:
+        print(f"\nTotal points filtered: {total_filtered}")
+        for sae_type, count in filtered_by_type.items():
+            if count > 0:
+                print(f"  {sae_type}: {count} points")
 
 
 def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
-                        max_mse: float = 0.01, max_l0: float = 250,
+                        max_mse: float = float('inf'), max_l0: float = float('inf'),
                         min_mse: float = 0.0, min_l0: float = 0.0):
     """Print a summary of the Pareto-optimal points for each layer and SAE type."""
     
     print("\n" + "=" * 80)
-    filter_str = f'MSE ∈ [{min_mse}, {max_mse}], L0 ∈ [{min_l0}, {max_l0}]'
-    print(f"PARETO FRONTIER SUMMARY - ALL SAE TYPES (Filtered: {filter_str})")
+    if max_mse == float('inf') and max_l0 == float('inf'):
+        filter_str = 'No filtering'
+    else:
+        filter_str = f'MSE ∈ [{min_mse}, {max_mse}], L0 ∈ [{min_l0}, {max_l0}]'
+    print(f"PARETO FRONTIER SUMMARY - ALL SAE TYPES ({filter_str})")
     print("=" * 80)
     
     # Define display names
     display_names = {
         'relu': 'ReLU',
         'gated': 'Gated',
-        'hardconcrete': 'HardConcrete'
+        'hardconcrete': 'HardConcrete',
+        'topk': 'Top-K'
     }
     
     for layer_name in layers:
@@ -468,7 +564,7 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
         print(f"LAYER: {layer_name}")
         print(f"{'='*80}")
         
-        for sae_type in ['relu', 'gated', 'hardconcrete']:
+        for sae_type in ['relu', 'gated', 'hardconcrete', 'topk']:
             if not data.get(sae_type):
                 continue
             
@@ -495,9 +591,12 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
                         filtered_count += 1
             
             if not runs_data:
-                print(f"  No data available after filtering ({filtered_count} runs filtered)")
+                if max_mse != float('inf') or max_l0 != float('inf'):
+                    print(f"  No data available after filtering ({filtered_count} runs filtered)")
+                else:
+                    print(f"  No data available")
                 continue
-            elif filtered_count > 0:
+            elif filtered_count > 0 and (max_mse != float('inf') or max_l0 != float('inf')):
                 print(f"  ({filtered_count} runs filtered out)")
             
             # Calculate statistics
@@ -546,14 +645,14 @@ def main():
     parser.add_argument(
         "--max-mse",
         type=float,
-        default=0.01,
-        help="Maximum MSE threshold for filtering (default: 0.01)"
+        default=0.001,
+        help="Maximum MSE threshold for filtering (default: 0.001)"
     )
     parser.add_argument(
         "--max-l0",
         type=float,
-        default=250,
-        help="Maximum L0 threshold for filtering (default: 250)"
+        default=100,
+        help="Maximum L0 threshold for filtering (default: 100)"
     )
     parser.add_argument(
         "--min-mse",
@@ -567,8 +666,16 @@ def main():
         default=0.0,
         help="Minimum L0 threshold for filtering (default: 0.0)"
     )
+    parser.add_argument(
+        "--log-scale",
+        action="store_true",
+        help="Use log scale for axes (default: False)"
+    )
     
     args = parser.parse_args()
+    
+    # Handle log scale flag - simple now
+    use_log_scale = args.log_scale
     
     # Collect data
     print("=" * 80)
@@ -582,7 +689,8 @@ def main():
     print("=" * 80)
     plot_all_pareto_curves(data, layers, Path(args.output_dir), 
                           max_mse=args.max_mse, max_l0=args.max_l0,
-                          min_mse=args.min_mse, min_l0=args.min_l0)
+                          min_mse=args.min_mse, min_l0=args.min_l0,
+                          use_log_scale=use_log_scale)
     
     # Print summary with filtering
     print_pareto_summary(data, layers, max_mse=args.max_mse, max_l0=args.max_l0,

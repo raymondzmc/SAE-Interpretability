@@ -19,6 +19,8 @@ from models.saes import (
     ReLUSAEConfig,
     HardConcreteSAEConfig,
     HardConcreteSAE,
+    LagrangianHardConcreteSAEConfig,
+    LagrangianHardConcreteSAE,
     GatedSAEConfig,
     GatedSAE,
     GatedHardConcreteSAEConfig,
@@ -86,6 +88,18 @@ class SAETransformer(torch.nn.Module):
                     mse_coeff=sae_config.mse_coeff,
                     tied_encoder_init=sae_config.tied_encoder_init,
                     apply_relu_to_magnitude=sae_config.apply_relu_to_magnitude,
+                    coefficient_threshold=sae_config.coefficient_threshold,
+                ).to(device)
+            elif isinstance(sae_config, LagrangianHardConcreteSAEConfig):
+                self.saes[self.all_sae_positions[i]] = LagrangianHardConcreteSAE(
+                    input_size=input_size,
+                    n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
+                    initial_beta=sae_config.initial_beta,
+                    stretch_limits=sae_config.hard_concrete_stretch_limits,
+                    mse_coeff=sae_config.mse_coeff,
+                    rho=sae_config.rho,
+                    tied_encoder_init=sae_config.tied_encoder_init,
+                    magnitude_activation=sae_config.magnitude_activation,
                     coefficient_threshold=sae_config.coefficient_threshold,
                 ).to(device)
             elif isinstance(sae_config, GatedSAEConfig):

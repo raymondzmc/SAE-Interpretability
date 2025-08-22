@@ -12,7 +12,14 @@ from pydantic import (
 )
 from data import DataConfig
 from models import create_sae_config
-from models.saes import ReLUSAEConfig, HardConcreteSAEConfig, GatedSAEConfig, GatedHardConcreteSAEConfig, TopKSAEConfig
+from models.saes import (
+    ReLUSAEConfig,
+    HardConcreteSAEConfig,
+    GatedSAEConfig,
+    GatedHardConcreteSAEConfig,
+    TopKSAEConfig,
+    LagrangianHardConcreteSAEConfig,
+)
 from utils.enums import SAEType
 from settings import settings
 
@@ -63,7 +70,7 @@ class Config(BaseModel):
     #     100_000, description="The number of tokens to caclulate activation frequency metrics over."
     # )
     data: DataConfig = Field(..., description="Data configuration with train/eval sample counts")
-    saes: Union[ReLUSAEConfig, HardConcreteSAEConfig, GatedSAEConfig, GatedHardConcreteSAEConfig, TopKSAEConfig] = Field(..., description="SAE configuration")
+    saes: Union[ReLUSAEConfig, HardConcreteSAEConfig, GatedSAEConfig, GatedHardConcreteSAEConfig, TopKSAEConfig, LagrangianHardConcreteSAEConfig] = Field(..., description="SAE configuration")
     
     @model_validator(mode="before")
     @classmethod

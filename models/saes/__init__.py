@@ -1,6 +1,7 @@
 from models.saes.base import SAEConfig, SAEOutput, BaseSAE, SAELoss
 from models.saes.relu_sae import ReluSAE, ReLUSAEConfig
 from models.saes.hc_sae import HardConcreteSAE, HardConcreteSAEConfig, HardConcreteSAEOutput
+from models.saes.lagrangian_hc_sae import LagrangianHardConcreteSAE, LagrangianHardConcreteSAEConfig, LagrangianHardConcreteSAEOutput
 from models.saes.gated_sae import (
     GatedSAE, GatedSAEConfig, GatedSAEOutput,
     GatedHardConcreteSAE, GatedHardConcreteSAEConfig, GatedHardConcreteSAEOutput
@@ -30,6 +31,8 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
     
     if sae_type == SAEType.HARD_CONCRETE:
         return HardConcreteSAEConfig.model_validate(config_dict)
+    elif sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
+        return LagrangianHardConcreteSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.RELU:
         return ReLUSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED:
@@ -43,8 +46,8 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
 
 
 # Keep track of available SAE types for validation
-AVAILABLE_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK}
-IMPLEMENTED_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK}
+AVAILABLE_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK}
+IMPLEMENTED_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK}
 
 
 __all__ = [
@@ -57,6 +60,9 @@ __all__ = [
     "HardConcreteSAE", 
     "HardConcreteSAEConfig", 
     "HardConcreteSAEOutput",
+    "LagrangianHardConcreteSAE",
+    "LagrangianHardConcreteSAEConfig",
+    "LagrangianHardConcreteSAEOutput",
     "GatedSAE",
     "GatedSAEConfig",
     "GatedSAEOutput",

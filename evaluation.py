@@ -206,8 +206,9 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     metrics[sae_pos]['explained_variance'] += exp_var * n_tokens
                     
                     # Get activations based on SAE type
+                    import pdb; pdb.set_trace()
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
-                        acts = sae_output.c
+                        acts = sae_output.z
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:
@@ -220,7 +221,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     # Update sparsity and alive components
                     metrics[sae_pos]['sparsity_l0'] += torch.norm(acts, p=0, dim=-1).mean().item() * n_tokens
                     
-                    # Get alive components, ensuring we always have a list
+                    # Get indices of non-zero (alive) activations
                     nonzero_indices = acts.sum(0).sum(0).nonzero().squeeze().cpu()
                     if nonzero_indices.numel() == 0:
                         alive_indices = []

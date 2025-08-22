@@ -1,7 +1,7 @@
 # Experiment Settings
 wandb_project: tinystories-1m-hardconcrete
 wandb_run_name: null
-wandb_tags: ["hardconcrete"]
+wandb_tags: ["lagrangian-hardconcrete"]
 seed: 42
 
 # Model Configuration  
@@ -50,3 +50,6 @@ saes:
   hard_concrete_stretch_limits: [-0.1, 1.1]
   tied_encoder_init: true
   magnitude_activation: "relu"
+  rho: 0.05
+  initial_alpha: 1.0
+  alpha_lr: 1e-2

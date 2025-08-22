@@ -74,3 +74,20 @@ def get_run_name(config: Config) -> str:
         run_name += f"lr-{config.lr}_"
         run_name += f"{'-'.join(config.saes.sae_positions)}"
     return run_name
+
+
+class RunningAverage:
+    def __init__(self):
+        self.sum = 0.0
+        self.weight = 0.0
+
+    def add(self, value, weight=1.0):
+        self.sum += float(value) * float(weight)
+        self.weight += float(weight)
+
+    def mean(self):
+        return self.sum / max(self.weight, 1e-8)
+
+    def reset(self):
+        self.sum = 0.0
+        self.weight = 0.0
