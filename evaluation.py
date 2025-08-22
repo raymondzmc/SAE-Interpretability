@@ -206,7 +206,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     metrics[sae_pos]['explained_variance'] += exp_var * n_tokens
                     
                     # Get activations based on SAE type
-                    import pdb; pdb.set_trace()
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
                         acts = sae_output.z
                     elif config.saes.sae_type == SAEType.RELU:
