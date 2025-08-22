@@ -123,7 +123,7 @@ class HardConcreteSAE(BaseSAE):
             stretch_limits: Stretch limits (l, r) for Hard Concrete. Must have l < 0 and r > 1.
             init_decoder_orthogonal: Initialize the decoder weights to be orthonormal
             tied_encoder_init: Tie the encoder weights to the decoder weights
-            apply_relu_to_magnitude: Apply ReLU to the magnitude
+            magnitude_activation: Activation function for the magnitude
             coefficient_threshold: Threshold for the coefficients during inference
         """
         super().__init__()

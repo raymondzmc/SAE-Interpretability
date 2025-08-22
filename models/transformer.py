@@ -87,7 +87,7 @@ class SAETransformer(torch.nn.Module):
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
                     tied_encoder_init=sae_config.tied_encoder_init,
-                    apply_relu_to_magnitude=sae_config.apply_relu_to_magnitude,
+                    magnitude_activation=sae_config.magnitude_activation,
                     coefficient_threshold=sae_config.coefficient_threshold,
                 ).to(device)
             elif isinstance(sae_config, LagrangianHardConcreteSAEConfig):
