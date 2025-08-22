@@ -29,7 +29,6 @@ from models.saes import (
     TopKSAE,
     create_sae_config,
 )
-from utils.enums import SAEType 
 from models.loader import load_tlens_model
 from utils.constants import CONFIG_FILE, WANDB_CACHE_DIR
 from utils.models import get_hook_shapes
@@ -95,9 +94,11 @@ class SAETransformer(torch.nn.Module):
                     input_size=input_size,
                     n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
                     initial_beta=sae_config.initial_beta,
+                    initial_alpha=sae_config.initial_alpha,
+                    alpha_lr=sae_config.alpha_lr,
+                    rho=sae_config.rho,
                     stretch_limits=sae_config.hard_concrete_stretch_limits,
                     mse_coeff=sae_config.mse_coeff,
-                    rho=sae_config.rho,
                     tied_encoder_init=sae_config.tied_encoder_init,
                     magnitude_activation=sae_config.magnitude_activation,
                     coefficient_threshold=sae_config.coefficient_threshold,
