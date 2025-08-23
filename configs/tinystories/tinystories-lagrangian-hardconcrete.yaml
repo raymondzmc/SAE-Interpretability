@@ -53,3 +53,5 @@ saes:
   rho: 0.05
   initial_alpha: 1.0
   alpha_lr: 1e-2
+  bias_l2_coeff: 1e-3
+  mu: 1.0

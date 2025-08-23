@@ -118,12 +118,12 @@ def train(
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()), lr=config.lr
     )
-
+    warmup_steps = config.warmup_samples // config.effective_batch_size
     if config.lr_schedule == "cosine":
         assert config.data.n_train_samples is not None, "Cosine schedule requires n_samples."
         lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=config.warmup_samples // config.effective_batch_size,
+            num_warmup_steps=warmup_steps,
             num_training_steps=config.data.n_train_samples // config.effective_batch_size,
             min_lr_factor=config.min_lr_factor,
         )
@@ -142,7 +142,6 @@ def train(
     beta_schedule = None
     if config.saes.sae_type in [SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE] and config.saes.beta_annealing:
         total_steps = config.data.n_train_samples // config.effective_batch_size
-        warmup_steps = config.warmup_samples // config.effective_batch_size
         hc_config = config.saes if isinstance(config.saes, (HardConcreteSAEConfig, LagrangianHardConcreteSAEConfig)) else None
         if hc_config is None:
             raise ValueError("Expected HardConcreteSAEConfig or LagrangianHardConcreteSAEConfig for Hard Concrete SAE type")
@@ -152,7 +151,6 @@ def train(
             warmup_steps=warmup_steps,
             total_steps=total_steps,
         )
-
 
     stop_at_layer = None
     if all(name.startswith("blocks.") for name in model.raw_sae_positions) and is_local:
@@ -249,10 +247,10 @@ def train(
                             original_sae_name = sae_name.replace("-", ".")
                             rho_hat = acc_open_rates[original_sae_name].mean()  # averaged over micro-batches
                             last_rho_hats[original_sae_name] = rho_hat
-                            sae.alpha.copy_(torch.clamp(
-                                sae.alpha + sae.alpha_lr * (rho_hat - float(sae.rho)),
-                                min=0.0
-                            ))
+                            if grad_updates >= warmup_steps:
+                                sae.alpha.copy_(sae.alpha + sae.alpha_lr * (rho_hat - float(sae.rho)))
+                            else:
+                                sae.alpha.zero_()
                             acc_open_rates[original_sae_name].reset()
 
         if is_log_step:
