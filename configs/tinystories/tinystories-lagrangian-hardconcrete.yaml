@@ -1,5 +1,5 @@
 # Experiment Settings
-wandb_project: tinystories-1m-hardconcrete
+wandb_project: tinystories-1m-lagrangian-hardconcrete
 wandb_run_name: null
 wandb_tags: ["lagrangian-hardconcrete"]
 seed: 42

@@ -162,7 +162,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
         self.register_buffer("log_neg_l_over_r", torch.tensor(math.log(-self.l / self.r), dtype=torch.float32, device='cpu'))
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
-        self.register_buffer("alpha", torch.tensor(initial_alpha, dtype=torch.float32, device='cpu'))
+        # self.register_buffer("alpha", torch.tensor(initial_alpha, dtype=torch.float32, device='cpu'))
+        self.register_buffer("alpha", torch.full((n_dict_components,), initial_alpha, dtype=torch.float32, device='cpu'))
         self.register_buffer("mu", torch.tensor(mu, dtype=torch.float32, device='cpu'))
 
         logit_rho = math.log(self.rho / (1 - self.rho))
@@ -235,8 +236,13 @@ class LagrangianHardConcreteSAE(BaseSAE):
         Args:
             output: The output of the HardConcreteSAE.
         """
-        rho_hat = output.p_open.mean()
-        sparsity_loss = self.alpha.detach() * (rho_hat - self.rho) + 0.5 * self.mu.item() * (rho_hat - self.rho)**2
+        p = output.p_open
+        m_d = p.mean(dim=(0, 1))
+        c = m_d - self.rho
+        sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).sum()
+
+        # rho_hat = output.p_open.mean()
+        # sparsity_loss = self.alpha.detach() * (rho_hat - self.rho) + 0.5 * self.mu.item() * (rho_hat - self.rho)**2
         mse_loss = F.mse_loss(output.output, output.input)
         bias_l2 = self.bias_l2_coeff * (self.gate_encoder.bias.pow(2).sum())
         loss = sparsity_loss + self.mse_coeff * mse_loss + bias_l2
