@@ -206,9 +206,9 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     metrics[sae_pos]['explained_variance'] += exp_var * n_tokens
                     # Get activations based on SAE type
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
-                        acts = sae_output.z
+                        acts = sae_output.c
                     elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
-                        acts = sae_output.z
+                        acts = sae_output.c
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:

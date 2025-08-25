@@ -22,21 +22,43 @@ plt.rcParams['savefig.dpi'] = 300
 plt.rcParams['font.size'] = 9
 
 
-def collect_all_metrics_data(project: str = "raymondl/tinystories-1m-hardconcrete") -> Dict[str, List[Dict]]:
+def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]]:
     """
-    Collect metrics data for all SAE types including different HardConcrete variants.
+    Collect metrics data for all SAE types from multiple projects.
+    
+    Args:
+        projects: List of project names to collect data from. If None, uses default projects.
     
     Returns:
         Dictionary with SAE type keys, each containing list of run data
     """
-    print("Collecting metrics data from Wandb...")
+    if projects is None:
+        projects = [
+            "raymondl/tinystories-1m-hardconcrete",  # HardConcrete variants and Top-K
+            "raymondl/tinystories-1m"                # ReLU and Gated SAEs
+        ]
+    
+    print(f"Collecting metrics data from {len(projects)} Wandb projects...")
+    for project in projects:
+        print(f"  - {project}")
     
     # Login to wandb
     wandb.login(key=settings.wandb_api_key)
     api = wandb.Api()
     
-    # Get all runs
-    runs = list(api.runs(project))
+    # Get all runs from all projects
+    all_runs = []
+    for project in projects:
+        print(f"\nFetching runs from {project}...")
+        project_runs = list(api.runs(project))
+        print(f"  Found {len(project_runs)} runs")
+        # Add project info to each run for tracking
+        for run in project_runs:
+            run._project_name = project
+        all_runs.extend(project_runs)
+    
+    print(f"\nTotal runs across all projects: {len(all_runs)}")
+    runs = all_runs
     
     # Collect data by SAE type
     data = {
@@ -78,8 +100,9 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m-hardconcret
             continue
             
         # Load metrics for this run
-        print(f"  Loading metrics for {run.name} ({run.id}) - Type: {sae_type}")
-        metrics = load_metrics_from_wandb(run.id, project)
+        run_project = getattr(run, '_project_name', projects[0])  # Fallback to first project
+        print(f"  Loading metrics for {run.name} ({run.id}) from {run_project} - Type: {sae_type}")
+        metrics = load_metrics_from_wandb(run.id, run_project)
         
         if metrics:
             # Extract hyperparameters based on SAE type
@@ -104,6 +127,20 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m-hardconcret
                         rho_value = float(rho_str)
                     except:
                         rho_value = None
+                
+                # If not found in name, try to load from model config
+                if rho_value is None:
+                    try:
+                        print(f"    Loading Lagrangian HC model to extract rho value...")
+                        model = SAETransformer.from_wandb(f"{run_project}/{run.id}")
+                        if hasattr(model.sae_config, 'rho'):
+                            rho_value = model.sae_config.rho
+                        # Clean up model
+                        del model
+                        import torch
+                        torch.cuda.empty_cache()
+                    except Exception as e:
+                        print(f"    Could not extract rho value: {e}")
             
             # For Top-K: extract k value
             elif sae_type == 'topk':
@@ -118,7 +155,7 @@ def collect_all_metrics_data(project: str = "raymondl/tinystories-1m-hardconcret
                 if k_value is None:
                     try:
                         print(f"    Loading Top-K model to extract k value...")
-                        model = SAETransformer.from_wandb(f"{project}/{run.id}")
+                        model = SAETransformer.from_wandb(f"{run_project}/{run.id}")
                         if hasattr(model.sae_config, 'k'):
                             k_value = model.sae_config.k
                         # Clean up model
@@ -334,7 +371,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         if sae_type == 'topk':
                             label = f'k={param}'
                         elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                            label = f'rho={param}'
+                            # Format rho value for better readability
+                            if param >= 0.01:
+                                label = f'rho={param:.2f}'
+                            elif param >= 0.001:
+                                label = f'rho={param:.3f}'
+                            else:
+                                label = f'rho={param:.0e}'
                         else:
                             # For sparsity coefficients
                             if param >= 0.01:
@@ -425,7 +468,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         if sae_type == 'topk':
                             label = f'k={param}'
                         elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                            label = f'rho={param}'
+                            # Format rho value for better readability
+                            if param >= 0.01:
+                                label = f'rho={param:.2f}'
+                            elif param >= 0.001:
+                                label = f'rho={param:.3f}'
+                            else:
+                                label = f'rho={param:.0e}'
                         else:
                             # For sparsity coefficients
                             if param >= 0.01:
@@ -516,7 +565,13 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         if sae_type == 'topk':
                             label = f'k={param}'
                         elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                            label = f'rho={param}'
+                            # Format rho value for better readability
+                            if param >= 0.01:
+                                label = f'rho={param:.2f}'
+                            elif param >= 0.001:
+                                label = f'rho={param:.3f}'
+                            else:
+                                label = f'rho={param:.0e}'
                         else:
                             # For sparsity coefficients
                             if param >= 0.01:
@@ -685,10 +740,11 @@ def main():
         description="Plot Pareto curves for all SAE types including HardConcrete variants"
     )
     parser.add_argument(
-        "--project",
+        "--projects",
         type=str,
-        default="raymondl/tinystories-1m-hardconcrete",
-        help="Wandb project"
+        nargs='+',
+        default=None,
+        help="Wandb projects to collect data from (default: raymondl/tinystories-1m-hardconcrete and raymondl/tinystories-1m)"
     )
     parser.add_argument(
         "--output-dir",
@@ -735,7 +791,7 @@ def main():
     print("=" * 80)
     print("Collecting data for all SAE types...")
     print("=" * 80)
-    data, layers = collect_all_metrics_data(args.project)
+    data, layers = collect_all_metrics_data(args.projects)
     
     # Create plots with filtering
     print("\n" + "=" * 80)
