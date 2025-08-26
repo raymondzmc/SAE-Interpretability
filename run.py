@@ -169,8 +169,8 @@ def train(
     grad_updates = 0
     grad_norm: float | None = None
     samples_since_act_frequency_collection: int = 0
-    acc_p_open: dict[str, torch.Tensor] = {}
-    acc_counts: dict[str, int] = {}
+    acc_open_sum = defaultdict(lambda: None)
+    acc_token_cnt = defaultdict(int) 
     last_rho_hats: dict[str, float] = defaultdict(float)
 
     for batch_idx, batch in tqdm(enumerate(train_loader), total=len(train_loader), desc="Steps"):
@@ -184,10 +184,6 @@ def train(
                 if isinstance(sae_module, (HardConcreteSAE, LagrangianHardConcreteSAE)):
                     beta_tensor = torch.tensor(current_beta, device=sae_module.beta.device, dtype=sae_module.beta.dtype)
                     sae_module.beta.copy_(beta_tensor)
-                    if config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
-                        original_sae_name = sae_name.replace("-", ".")
-                        acc_p_open[original_sae_name] = torch.zeros((sae_module.n_dict_components,), device=sae_module.alpha.device, dtype=sae_module.alpha.dtype)
-                        acc_counts[original_sae_name] = 0
 
         total_samples += tokens.shape[0]
         n_tokens = tokens.shape[0] * tokens.shape[1]
@@ -225,8 +221,12 @@ def train(
         with torch.no_grad():
             if config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
                 for sae_name, sae_output in output.sae_outputs.items():
-                    acc_p_open[sae_name] += sae_output.p_open.sum(dim=(0,1))
-                    acc_counts[sae_name] += n_tokens
+                    m_d_batch = sae_output.p_open.mean(dim=(0,1))  # (D,)
+                    if acc_open_sum[sae_name] is None:
+                        acc_open_sum[sae_name] = m_d_batch.detach() * n_tokens
+                    else:
+                        acc_open_sum[sae_name] += m_d_batch.detach() * n_tokens
+                    acc_token_cnt[sae_name] += n_tokens
 
         loss = sum(loss_output.loss for loss_output in output.loss_outputs.values())
         loss /= config.gradient_accumulation_steps
@@ -246,15 +246,21 @@ def train(
                     for sae_name, module in model.saes.named_modules():
                         if isinstance(module, (LagrangianHardConcreteSAE)):
                             sae: LagrangianHardConcreteSAE = module
-                            original_sae_name = sae_name.replace("-", ".")
-                            m_d = acc_p_open[original_sae_name] / acc_counts[original_sae_name]     # (D,)
-                            if grad_updates >= warmup_steps:
-                                sae.alpha.copy_(sae.alpha + sae.alpha_lr * (m_d - float(sae.rho)))
-                            else:
-                                sae.alpha.zero_()
-                            last_rho_hats[original_sae_name] = m_d.mean().item()
-                            acc_p_open[original_sae_name].zero_()
-                            acc_counts[original_sae_name] = 0
+                            key = sae_name.replace("-", ".")
+                            if acc_token_cnt[key] > 0:
+                                m_d = acc_open_sum[key] / acc_token_cnt[key]  # (D,)
+                                if grad_updates >= warmup_steps:
+                                    sae.alpha.copy_(
+                                        torch.clamp(
+                                            sae.alpha + sae.alpha_lr * (m_d - float(sae.rho)),
+                                            min=0.0
+                                        )
+                                    )
+                                else:
+                                    sae.alpha.zero_()
+                                last_rho_hats[key] = m_d.mean().item()
+                                acc_open_sum[key] = None
+                                acc_token_cnt[key] = 0
 
         if is_log_step:
             tqdm.write(
@@ -277,13 +283,10 @@ def train(
                 log_info.update(all_metrics(output, train=True))
 
                 if config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
-                    for sae_name, module in model.saes.named_modules():
-                        if isinstance(module, (LagrangianHardConcreteSAE)):
-                            sae: LagrangianHardConcreteSAE = module
-                            original_sae_name = sae_name.replace("-", ".")
-                            log_info[f"{original_sae_name}/alpha"] = sae.alpha.mean().item()
-                            log_info[f"{original_sae_name}/alpha_std"]  = sae.alpha.std().item()
-                            log_info[f"{original_sae_name}/rho_hat"]    = last_rho_hats[original_sae_name]
+                    for sae_name, sae_output in output.sae_outputs.items():
+                        log_info[f"{sae_name}/alpha"]     = sae_output.alpha.mean().item()
+                        log_info[f"{sae_name}/alpha_std"] = sae_output.alpha.std().item()
+                        log_info[f"{sae_name}/rho_hat"]   = last_rho_hats[sae_name]
 
                 if is_eval_step and eval_loader is not None:
                     eval_metrics = evaluate(

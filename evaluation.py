@@ -208,7 +208,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
-                        acts = sae_output.z
+                        acts = sae_output.c
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:

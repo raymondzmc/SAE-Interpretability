@@ -103,6 +103,7 @@ class SAETransformer(torch.nn.Module):
                     magnitude_activation=sae_config.magnitude_activation,
                     coefficient_threshold=sae_config.coefficient_threshold,
                     bias_l2_coeff=sae_config.bias_l2_coeff,
+                    lb_coeff=sae_config.lb_coeff,
                     mu=sae_config.mu,
                 ).to(device)
             elif isinstance(sae_config, GatedSAEConfig):

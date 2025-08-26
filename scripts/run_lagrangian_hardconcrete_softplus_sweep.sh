@@ -1,0 +1,11 @@
+#!/bin/bash
+conda activate sae
+
+CUDA_VISIBLE_DEVICES=4 python run_experiments.py \
+--base_config configs/tinystories/tinystories-lagrangian-hardconcrete.yaml \
+--sweep_config configs/tinystories/sweep/lagrangian_hardconcrete/softplus_sweep.yaml \
+--output_dir experiment_outputs/softplus_lagrangian_hardconcrete_sweep
+
+CUDA_VISIBLE_DEVICES=4 python evaluation.py \
+--wandb_project raymondl/tinystories-1m-lagrangian-hardconcrete \
+--filter_runs_by_name softplus_lagrangian_hardconcrete

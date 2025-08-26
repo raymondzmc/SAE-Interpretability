@@ -28,6 +28,7 @@ class LagrangianHardConcreteSAEConfig(SAEConfig):
     rho: float = Field(0.05, description="Target sparsity level for Lagrangian dual-ascent controller")
     mu: float = Field(1.0, description="Regularization parameter for the sparsity loss")
     bias_l2_coeff: float = Field(1e-3, description="L2 regularization for the gate encoder bias")
+    lb_coeff: float = Field(1e-3, description="Load balance regularization")
     
     @model_validator(mode="before")
     @classmethod
@@ -116,6 +117,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         alpha_lr: float = 1e-2,
         mse_coeff: float | None = None,
         bias_l2_coeff: float = 1e-3, # L2 regularization for the gate encoder bias
+        lb_coeff: float = 1e-3, # Load balance regularization
         rho: float = 0.05,
         mu: float = 1.0,
         stretch_limits: tuple[float, float] = (-0.1, 1.1), # Stretch limits for Hard Concrete
@@ -134,6 +136,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
             alpha_lr: Learning rate for alpha
             mse_coeff: Coefficient for MSE loss term
             bias_l2_coeff: L2 regularization for the gate encoder bias
+            lb_coeff: Load balance regularization
             rho: Target sparsity level for Lagrangian controller
             stretch_limits: Stretch limits (l, r) for Hard Concrete. Must have l < 0 and r > 1.
             init_decoder_orthogonal: Initialize the decoder weights to be orthonormal
@@ -147,6 +150,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.rho = rho
         self.mse_coeff = mse_coeff or 1.0
         self.bias_l2_coeff = bias_l2_coeff
+        self.lb_coeff = lb_coeff
         self.alpha_lr = alpha_lr
         self.coefficient_threshold = coefficient_threshold
 
@@ -169,7 +173,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         logit_rho = math.log(self.rho / (1 - self.rho))
         bias0 = logit_rho + float(self.beta) * float(self.log_neg_l_over_r)
         torch.nn.init.constant_(self.gate_encoder.bias, bias0)
-        torch.nn.init.zeros_(self.gate_encoder.weight)
+        torch.nn.init.normal_(self.gate_encoder.weight, mean=0.0, std=0.02)
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
@@ -239,18 +243,24 @@ class LagrangianHardConcreteSAE(BaseSAE):
         p = output.p_open
         m_d = p.mean(dim=(0, 1))
         c = m_d - self.rho
-        sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).sum()
+        sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).mean()
 
         # rho_hat = output.p_open.mean()
         # sparsity_loss = self.alpha.detach() * (rho_hat - self.rho) + 0.5 * self.mu.item() * (rho_hat - self.rho)**2
         mse_loss = F.mse_loss(output.output, output.input)
         bias_l2 = self.bias_l2_coeff * (self.gate_encoder.bias.pow(2).sum())
-        loss = sparsity_loss + self.mse_coeff * mse_loss + bias_l2
+        
+
+        m = m_d / (m_d.sum() + 1e-8)
+        load_balance_loss = self.lb_coeff * (m * (m.clamp_min(1e-12).log() + math.log(self.n_dict_components))).sum()
+        loss = sparsity_loss + self.mse_coeff * mse_loss + bias_l2 + self.lb_coeff * load_balance_loss
         return SAELoss(
             loss=loss,
             loss_dict={
                 "mse_loss": mse_loss.detach().clone(),
                 "sparsity_loss": sparsity_loss.detach().clone(),
+                "bias_l2": bias_l2.detach().clone(),
+                "load_balance_loss": load_balance_loss.detach().clone(),
             },
         )
 
