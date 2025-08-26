@@ -87,7 +87,7 @@ def hard_concrete(
         z = torch.clamp(s_stretched, min=0.0, max=1.0)
     else:
         # Evaluation mode: use deterministic output
-        s = torch.sigmoid(logits / beta)
+        s = torch.sigmoid(logits)
         s_stretched = s * (r - l) + l
         z = torch.clamp(s_stretched, min=0.0, max=1.0)
 
