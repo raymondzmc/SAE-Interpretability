@@ -78,17 +78,10 @@ def evaluate(
             cache_positions=eval_cache_positions,
             compute_loss=True,
         )
-        # Create dictionary components mapping for alive count computation
-        n_dict_components = {
-            sae_pos: model.saes[sae_pos.replace(".", "-")].n_dict_components
-            for sae_pos in model.raw_sae_positions
-        }
-        
         batch_metrics = all_metrics(
             output, 
             train=False, 
-            sae_type=config.saes.sae_type,
-            n_dict_components=n_dict_components
+            sae_type=config.saes.sae_type
         )
         
         for k, v in batch_metrics.items():
@@ -292,17 +285,10 @@ def train(
                 if grad_norm is not None:
                     log_info["grad_norm"] = grad_norm  # Norm of grad before clipping
 
-                # Create dictionary components mapping for alive count computation  
-                n_dict_components = {
-                    sae_pos: model.saes[sae_pos.replace(".", "-")].n_dict_components
-                    for sae_pos in model.raw_sae_positions
-                }
-                
                 log_info.update(all_metrics(
                     output, 
                     train=True, 
-                    sae_type=config.saes.sae_type,
-                    n_dict_components=n_dict_components
+                    sae_type=config.saes.sae_type
                 ))
 
                 if config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:

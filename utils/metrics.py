@@ -67,6 +67,24 @@ def get_activations_for_sae_type(sae_output, sae_type: SAEType) -> torch.Tensor:
         return sae_output.c  # Default to main activations
 
 
+def compute_alive_dictionary_indices(activations: torch.Tensor) -> list[int]:
+    """Compute indices of alive (non-zero) dictionary components from activations.
+    
+    Args:
+        activations: Tensor of shape (batch, seq_len, dict_size)
+        
+    Returns:
+        List of indices of dictionary components that have non-zero activations
+    """
+    nonzero_indices = activations.sum(0).sum(0).nonzero().squeeze().cpu()
+    if nonzero_indices.numel() == 0:
+        return []
+    elif nonzero_indices.numel() == 1:
+        return [nonzero_indices.item()]
+    else:
+        return nonzero_indices.tolist()
+
+
 @torch.inference_mode()
 def reconstruction_metrics(output: SAETransformerOutput, sae_type: SAEType) -> dict[str, float]:
     """Get metrics on the outputs of the SAE-augmented model and the original model.
@@ -103,13 +121,12 @@ def reconstruction_metrics(output: SAETransformerOutput, sae_type: SAEType) -> d
 
 
 @torch.inference_mode()
-def sparsity_metrics(output: SAETransformerOutput, sae_type: SAEType, n_dict_components: dict[str, int] | None = None) -> dict[str, float]:
+def sparsity_metrics(output: SAETransformerOutput, sae_type: SAEType) -> dict[str, float]:
     """Collect sparsity metrics for logging.
 
     Args:
         output: The output of the SAE-augmented Transformer.
         sae_type: The type of SAE being used.
-        n_dict_components: Dictionary mapping SAE position to number of dictionary components.
 
     Returns:
         Dictionary of sparsity metrics.
@@ -123,22 +140,14 @@ def sparsity_metrics(output: SAETransformerOutput, sae_type: SAEType, n_dict_com
         l_0_norm = torch.norm(acts, p=0, dim=-1).mean().item()
         frac_zeros = ((acts == 0).sum() / acts.numel()).item()
         
-        # Compute alive dictionary components (like evaluation.py)
-        if n_dict_components is not None and name in n_dict_components:
-            # Get indices of non-zero (alive) activations
-            nonzero_indices = acts.sum(0).sum(0).nonzero().squeeze().cpu()
-            if nonzero_indices.numel() == 0:
-                alive_indices = []
-            elif nonzero_indices.numel() == 1:
-                alive_indices = [nonzero_indices.item()]
-            else:
-                alive_indices = nonzero_indices.tolist()
-            
-            num_alive = len(alive_indices)
-            sparsity_metrics[f"alive_dict_components/{name}"] = num_alive
+        # Compute alive dictionary components (always computed now)
+        alive_indices = compute_alive_dictionary_indices(acts)
+        num_alive = len(alive_indices)
+        sparsity_metrics[f"alive_dict_components/{name}"] = num_alive
 
         # Store with consistent naming for cross-SAE comparison
         sparsity_metrics[f"L_0/{name}"] = l_0_norm
+        sparsity_metrics[f"frac_zeros/{name}"] = frac_zeros
 
     return sparsity_metrics
 
@@ -153,14 +162,13 @@ def loss_metrics(output: SAETransformerOutput) -> dict[str, float]:
     return loss_metrics
 
 
-def all_metrics(output: SAETransformerOutput, train: bool = True, sae_type: SAEType | None = None, n_dict_components: dict[str, int] | None = None) -> dict[str, float]:
+def all_metrics(output: SAETransformerOutput, train: bool = True, sae_type: SAEType | None = None) -> dict[str, float]:
     """Calculate all metrics for the output of the SAE-augmented Transformer.
 
     Args:
         output: The output of the SAE-augmented Transformer.
         train: Whether this is for training (True) or evaluation (False).
         sae_type: The type of SAE being used (needed for correct activation selection).
-        n_dict_components: Dictionary mapping SAE position to number of dictionary components.
 
     Returns:
         Dictionary of all metrics.
@@ -173,6 +181,6 @@ def all_metrics(output: SAETransformerOutput, train: bool = True, sae_type: SAET
     
     return {
         **{f"{prefix}/{k}": v for k, v in reconstruction_metrics(output, sae_type).items()},
-        **{f"{prefix}/{k}": v for k, v in sparsity_metrics(output, sae_type, n_dict_components).items()},
+        **{f"{prefix}/{k}": v for k, v in sparsity_metrics(output, sae_type).items()},
         **{f"{prefix}/{k}": v for k, v in loss_metrics(output).items()},
     }

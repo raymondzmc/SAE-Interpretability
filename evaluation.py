@@ -23,8 +23,7 @@ from utils.io import (
     load_metrics_from_wandb,
     load_explanations_from_wandb
 )
-from utils.enums import SAEType
-from utils.metrics import explained_variance
+from utils.metrics import explained_variance, get_activations_for_sae_type, compute_alive_dictionary_indices
 from utils.plotting import create_pareto_plots
 from auto_interp.explainers.features import FeatureRecord, Feature
 from auto_interp.explainers.explainer import DefaultExplainer, ExplainerResult
@@ -190,48 +189,31 @@ def run_evaluation(args: argparse.Namespace) -> None:
                 for sae_pos in model.raw_sae_positions:
                     sae_output = output.sae_outputs[sae_pos]
                     
-                    # Compute metrics
-                    metrics[sae_pos]['mse'] += mse_loss(
+                    # Compute MSE using the same logic as utils/metrics.py
+                    mse_val = mse_loss(
                         sae_output.output,
                         sae_output.input,
                         reduction='mean'
-                    ).item() * n_tokens
+                    ).item()
+                    metrics[sae_pos]['mse'] += mse_val * n_tokens
                     
-                    # Compute explained variance using the proper function from utils.metrics
+                    # Compute explained variance using the shared function from utils.metrics
                     exp_var = explained_variance(
                         sae_output.output,
                         sae_output.input,
                         layer_norm_flag=False
                     ).mean().item()
                     metrics[sae_pos]['explained_variance'] += exp_var * n_tokens
-                    # Get activations based on SAE type
-                    if config.saes.sae_type == SAEType.HARD_CONCRETE:
-                        acts = sae_output.c
-                    elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
-                        acts = sae_output.z
-                    elif config.saes.sae_type == SAEType.RELU:
-                        acts = sae_output.c
-                    elif config.saes.sae_type == SAEType.GATED:
-                        acts = sae_output.z
-                    elif config.saes.sae_type == SAEType.TOPK:
-                        acts = sae_output.code
-                    elif config.saes.sae_type == SAEType.GUMBEL_TOPK:
-                        acts = sae_output.z_st
-                    else:
-                        acts = sae_output.c  # Default to main activations
-
-                    # Update sparsity and alive components
-                    metrics[sae_pos]['sparsity_l0'] += torch.norm(acts, p=0, dim=-1).mean().item() * n_tokens
                     
-                    # Get indices of non-zero (alive) activations
-                    nonzero_indices = acts.sum(0).sum(0).nonzero().squeeze().cpu()
-                    if nonzero_indices.numel() == 0:
-                        alive_indices = []
-                    elif nonzero_indices.numel() == 1:
-                        alive_indices = [nonzero_indices.item()]
-                    else:
-                        alive_indices = nonzero_indices.tolist()
+                    # Get activations using the shared function from utils.metrics
+                    acts = get_activations_for_sae_type(sae_output, config.saes.sae_type)
                     
+                    # Compute L0 sparsity using the same logic as utils/metrics.py
+                    l0_val = torch.norm(acts, p=0, dim=-1).mean().item()
+                    metrics[sae_pos]['sparsity_l0'] += l0_val * n_tokens
+                    
+                    # Compute alive dictionary components using the shared helper function
+                    alive_indices = compute_alive_dictionary_indices(acts)
                     metrics[sae_pos]['alive_dict_components'].update(alive_indices)
 
                     if args.save_activation_data:
