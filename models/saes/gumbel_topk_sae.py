@@ -1,8 +1,7 @@
-# prob_gated_sae.py
 import torch
 import torch.nn.functional as F
-from typing import Any, Callable
-from pydantic import Field, model_validator
+from typing import Callable
+from pydantic import Field
 from models.saes.base import SAEConfig, SAEOutput, SAELoss, BaseSAE
 from utils.enums import SAEType
 
@@ -20,12 +19,13 @@ class GumbelTopKSAEConfig(SAEConfig):
     init_decoder_orthogonal: bool = Field(True)
     tied_encoder_init: bool = Field(True)
     decoder_bias: bool = Field(True)
+    aux_k: int | None = Field(None, description="Auxiliary K for dead-feature loss (select top aux_k from the inactive set)")
+    aux_coeff: float | None = Field(None, description="Coefficient for the auxiliary reconstruction loss")
 
 
 class GumbelTopKSAEOutput(SAEOutput):
     z: torch.Tensor
     z_soft: torch.Tensor
-    p_open: torch.Tensor
     magnitude: torch.Tensor
 
 
@@ -78,6 +78,8 @@ class GumbelTopKSAE(BaseSAE):
         tied_encoder_init: bool = True,
         magnitude_activation: str | None = "softplus",
         decoder_bias: bool = True,
+        aux_k: int | None = None,
+        aux_coeff: float | None = None,
     ):
         super().__init__()
         self.input_size = input_size
@@ -85,9 +87,10 @@ class GumbelTopKSAE(BaseSAE):
 
         self.k = int(k)
         self.gumbel_temp = float(gumbel_temperature)
+        self.aux_k = aux_k
+        self.aux_coeff = aux_coeff
 
         # Encoders/Decoder
-        self.encoder_ln = torch.nn.LayerNorm(input_size)
         self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
@@ -95,55 +98,68 @@ class GumbelTopKSAE(BaseSAE):
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
         self.decoder_bias = torch.nn.Parameter(torch.zeros(input_size)) if decoder_bias else None
 
-        # Inits
+
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
         if tied_encoder_init:
             self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
-        torch.nn.init.normal_(self.gate_encoder.weight, mean=0.0, std=0.02)
+            self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
+
+        torch.nn.init.zeros_(self.gate_encoder.bias)
+        torch.nn.init.zeros_(self.magnitude_encoder.bias)
 
     @property
     def dict_elements(self):
         # Normalize dictionary columns
         return F.normalize(self.decoder.weight, dim=0)
 
-    def _pre_x(self, x: torch.Tensor) -> torch.Tensor:
-        if self.decoder_bias is not None:
-            x = x - self.decoder_bias
-        return self.encoder_ln(x)
-
     def forward(self, x: torch.Tensor) -> GumbelTopKSAEOutput:
         """
         x: (B, D_in) or (B, T, D_in)
         Returns z (sampled), z_soft (surrogate), p_open (confidence), magnitude, x_hat
         """
-        x = self._pre_x(x)
-        logits = self.gate_encoder(x)
+        x_centered = x - self.decoder_bias
+        logits = self.gate_encoder(x_centered)
 
         z_st, z_soft = _sample_gumbel_topk(
             logits, K=self.k, temp=self.gumbel_temp, training=self.training
         )
-        p_open = torch.sigmoid(logits / max(1e-6, self.gumbel_temp))
-
-        # magnitude
-        mag_pre = self.magnitude_encoder(x)
+        mag_pre = self.magnitude_encoder(x_centered)
         magnitude = self.magnitude_activation(mag_pre) if self.magnitude_activation else mag_pre
 
-        # codes and reconstruction (straight-through z)
         c = z_st * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
 
         return GumbelTopKSAEOutput(
             input=x, output=x_hat, c=c,
-            z=z_st, z_soft=z_soft, p_open=p_open, logits=None, magnitude=magnitude,
+            z=z_st, z_soft=z_soft, logits=None, magnitude=magnitude,
         )
 
     def compute_loss(self, output: GumbelTopKSAEOutput) -> SAELoss:
         loss = F.mse_loss(output.output, output.input)
+        aux_loss = torch.zeros((), device=output.input.device)
+        if self.training and self.aux_coeff and self.aux_k:
+            e = output.input - output.output
+            # pick from "inactive" set by zeroing current winners (use z_hard as in output.z)
+            z_soft = output.z_soft
+            inactive_scores = z_soft * (1.0 - output.z)  # prefer near-miss losers
+            k_aux = min(self.aux_k, inactive_scores.size(-1) - self.k)
+            if k_aux > 0:
+                _, aux_idx = torch.topk(inactive_scores, k=k_aux, dim=-1)
+                aux_mask = torch.zeros_like(inactive_scores).scatter_(-1, aux_idx, 1.0)
+                # reuse magnitude for selected aux, with DETACHED decoder (ghost grads)
+                aux_code = aux_mask * output.c.detach() / (output.z + 1e-12)  # magnitude for selected aux; safe divide
+                with torch.no_grad():
+                    dec_w = F.normalize(self.decoder.weight.detach(), dim=0)
+                e_hat = F.linear(aux_code, dec_w, bias=None)
+                aux_loss = F.mse_loss(e_hat, e)
+                loss + self.aux_coeff * aux_loss
+
         return SAELoss(
             loss=loss,
             loss_dict={
                 "mse_loss": loss.detach().clone(),
+                "aux_loss": aux_loss.detach().clone(),
                 "sum_z_mean": output.z.sum(dim=-1).mean().detach().clone(),
                 "sum_z_soft_mean": output.z_soft.sum(dim=-1).mean().detach().clone(),
             },
