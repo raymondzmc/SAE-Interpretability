@@ -363,9 +363,12 @@ def run(config_path_or_obj: Path | str | Config, device: torch.device | None = N
     logger.info(config)
 
     # Create train and eval loaders using simplified data config
+    # Use quick_eval for streaming datasets to avoid expensive skip operations
+    quick_eval = config.data.streaming and config.data.n_eval_samples is not None
     train_loader, eval_loader = create_dataloaders(
         data_config=config.data,
-        global_seed=config.seed
+        global_seed=config.seed,
+        quick_eval=quick_eval
     )
     tlens_model = load_tlens_model(
         tlens_model_name=config.tlens_model_name, tlens_model_path=config.tlens_model_path, device=device

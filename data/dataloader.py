@@ -175,6 +175,7 @@ def create_dataloaders(
     data_config: DataConfig,
     global_seed: int = 0,
     buffer_size: int = 1000,
+    quick_eval: bool = False,
 ) -> tuple[DataLoader, DataLoader | None]:
     """Create train and eval DataLoaders with separate splits from simplified config.
     
@@ -182,6 +183,7 @@ def create_dataloaders(
         data_config: The data configuration
         global_seed: Global seed for reproducibility
         buffer_size: Buffer size for streaming datasets
+        quick_eval: If True, use different random seed for eval instead of skipping train samples
         
     Returns:
         Tuple of (train_loader, eval_loader)
@@ -191,28 +193,33 @@ def create_dataloaders(
     dataset = load_dataset(data_config.dataset_name, streaming=data_config.streaming, split=data_config.split)
     seed = data_config.seed if data_config.seed is not None else global_seed
     
-    # Shuffle dataset
-    if data_config.streaming:
-        dataset = dataset.shuffle(seed=seed, buffer_size=buffer_size)
-    else:
-        dataset = dataset.shuffle(seed=seed)
-    
     # Create train and eval splits
     if data_config.streaming:
-        # For streaming datasets, take sequential chunks
-        train_dataset = dataset.take(data_config.n_train_samples)
-        
-        if data_config.n_eval_samples is not None:
-            # Skip train samples and take eval samples with progress bar
-            eval_dataset = create_eval_dataset_with_progress(
-                dataset, 
-                data_config.n_train_samples, 
-                data_config.n_eval_samples
-            )
+        # For streaming datasets, handle train and eval differently based on quick_eval
+        if quick_eval and data_config.n_eval_samples is not None:
+            # Quick eval: use different seeds for train and eval datasets
+            train_dataset = dataset.shuffle(seed=seed, buffer_size=buffer_size).take(data_config.n_train_samples)
+            
+            # Use a different seed for eval dataset (seed + 42 for reproducibility)
+            eval_seed = seed + 42
+            eval_dataset = dataset.shuffle(seed=eval_seed, buffer_size=buffer_size).take(data_config.n_eval_samples)
         else:
-            eval_dataset = None
+            # Traditional approach: shuffle once, then split sequentially
+            dataset = dataset.shuffle(seed=seed, buffer_size=buffer_size)
+            train_dataset = dataset.take(data_config.n_train_samples)
+            
+            if data_config.n_eval_samples is not None:
+                # Skip train samples and take eval samples with progress bar
+                eval_dataset = create_eval_dataset_with_progress(
+                    dataset, 
+                    data_config.n_train_samples, 
+                    data_config.n_eval_samples
+                )
+            else:
+                eval_dataset = None
     else:
-        # For non-streaming datasets, create proper splits
+        # For non-streaming datasets, shuffle and create proper splits
+        dataset = dataset.shuffle(seed=seed)
         total_needed = data_config.n_train_samples + (data_config.n_eval_samples or 0)
         
         # Take only the samples we need to avoid loading the entire dataset
