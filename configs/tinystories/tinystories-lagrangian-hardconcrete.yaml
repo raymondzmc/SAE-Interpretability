@@ -15,7 +15,7 @@ gradient_accumulation_steps: 1
 lr: 1e-3
 lr_schedule: cosine
 min_lr_factor: 0.1
-warmup_samples: 20_000
+warmup_samples: 5_000
 max_grad_norm: 1.0
 log_every_n_grad_steps: 20
 
@@ -45,7 +45,7 @@ saes:
   init_decoder_orthogonal: true
   sparsity_coeff: 0.1
   initial_beta: 1.0
-  final_beta: 0.5
+  final_beta: 1.0
   beta_annealing: true
   hard_concrete_stretch_limits: [-0.1, 1.1]
   tied_encoder_init: true

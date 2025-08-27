@@ -245,7 +245,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
         # Augmented Lagrangian
         c = m_d - self.rho
-        sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).mean()
+        sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).sum()
 
         # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
