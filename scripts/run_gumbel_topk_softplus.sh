@@ -3,7 +3,7 @@ conda activate sae
 
 CUDA_VISIBLE_DEVICES=2 python run_experiments.py \
 --base_config configs/tinystories/tinystories-gumbel-topk.yaml \
---sweep_config configs/tinystories/sweep/gumbel_topk_sweep.yaml \
+--sweep_config configs/tinystories/sweep/gumbel_topk_softplus_sweep.yaml \
 --output_dir experiment_outputs/gumbel_topk_softplus_sweep
 
 CUDA_VISIBLE_DEVICES=2 python evaluation.py \
