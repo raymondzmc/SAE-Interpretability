@@ -153,6 +153,8 @@ class SAETransformer(torch.nn.Module):
                     tied_encoder_init=sae_config.tied_encoder_init,
                     magnitude_activation=sae_config.magnitude_activation,
                     decoder_bias=sae_config.decoder_bias,
+                    aux_k=sae_config.aux_k,
+                    aux_coeff=sae_config.aux_coeff,
                 ).to(device)
             else:
                 raise ValueError(f"Unsupported SAE type: {sae_config.sae_type}")
