@@ -37,7 +37,8 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
     elif sae_type == SAEType.RELU:
         return ReLUSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED:
-        return GatedSAEConfig.model_validate(config_dict)
+        return GumbelTopKSAEConfig.model_validate(config_dict)
+        # return GatedSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.GATED_HARD_CONCRETE:
         return GatedHardConcreteSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.TOPK:
