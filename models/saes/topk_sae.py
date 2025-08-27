@@ -199,13 +199,6 @@ class TopKSAE(BaseSAE):
                 aux_loss = F.mse_loss(x_hat_aux, output.input)
                 total_loss = total_loss + self.aux_coeff * aux_loss
                 loss_dict["aux_loss"] = aux_loss.detach().clone()
-            else:
-                # No room for auxiliary picks; report zero aux loss
-                loss_dict["aux_loss"] = torch.zeros((), device=output.input.device)
-
-        # (For logging only) a formal "sparsity_loss" placeholder to match other SAEs
-        if "sparsity_loss" not in loss_dict:
-            loss_dict["sparsity_loss"] = torch.zeros((), device=output.input.device)
 
         return SAELoss(loss=total_loss, loss_dict=loss_dict)
 

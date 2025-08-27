@@ -21,13 +21,6 @@ class GumbelTopKSAEConfig(SAEConfig):
     tied_encoder_init: bool = Field(True)
     decoder_bias: bool = Field(True)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _fix_type(cls, values: dict[str, Any]) -> dict[str, Any]:
-        if isinstance(values, dict):
-            values["sae_type"] = SAEType.GATED
-        return values
-
 
 class GumbelTopKSAEOutput(SAEOutput):
     z: torch.Tensor
