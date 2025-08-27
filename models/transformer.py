@@ -27,6 +27,8 @@ from models.saes import (
     GatedHardConcreteSAE,
     TopKSAEConfig,
     TopKSAE,
+    GumbelTopKSAEConfig,
+    GumbelTopKSAE,
     create_sae_config,
 )
 from models.loader import load_tlens_model
@@ -140,6 +142,17 @@ class SAETransformer(torch.nn.Module):
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
                     init_decoder_orthogonal=sae_config.init_decoder_orthogonal,
+                ).to(device)
+            elif isinstance(sae_config, GumbelTopKSAEConfig):
+                self.saes[self.all_sae_positions[i]] = GumbelTopKSAE(
+                    input_size=input_size,
+                    n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
+                    k=sae_config.k,
+                    gumbel_temperature=sae_config.gumbel_temperature,
+                    init_decoder_orthogonal=sae_config.init_decoder_orthogonal,
+                    tied_encoder_init=sae_config.tied_encoder_init,
+                    magnitude_activation=sae_config.magnitude_activation,
+                    decoder_bias=sae_config.decoder_bias,
                 ).to(device)
             else:
                 raise ValueError(f"Unsupported SAE type: {sae_config.sae_type}")

@@ -215,6 +215,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                         acts = sae_output.z
                     elif config.saes.sae_type == SAEType.TOPK:
                         acts = sae_output.code
+                    elif config.saes.sae_type == SAEType.GUMBEL_TOPK:
+                        acts = sae_output.z_st
                     else:
                         acts = sae_output.c  # Default to main activations
 
