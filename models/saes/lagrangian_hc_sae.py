@@ -170,8 +170,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.register_buffer("alpha", torch.full((n_dict_components,), initial_alpha, dtype=torch.float32, device='cpu'))
         self.register_buffer("mu", torch.tensor(mu, dtype=torch.float32, device='cpu'))
 
-        bias0 = logit_rho + float(self.beta) * float(self.log_neg_l_over_r)
         logit_rho = math.log(self.rho / (1 - self.rho))
+        bias0 = logit_rho + float(self.beta) * float(self.log_neg_l_over_r)
         self.register_buffer("gate_bias0", torch.full((n_dict_components,), bias0, dtype=torch.float32))
 
         torch.nn.init.constant_(self.gate_encoder.bias, bias0)
