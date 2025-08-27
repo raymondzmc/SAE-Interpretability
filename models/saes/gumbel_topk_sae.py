@@ -30,12 +30,10 @@ class GumbelTopKSAEConfig(SAEConfig):
 
 
 class GumbelTopKSAEOutput(SAEOutput):
-    z: torch.Tensor           # sampled hard/soft gate used for reconstruction (straight-through)
-    z_soft: torch.Tensor      # soft surrogate used for gradients (logging/aux losses)
-    p_open: torch.Tensor      # probability/confidence proxy
-    logits: torch.Tensor      # gate logits (after optional centering/scaling)
+    z: torch.Tensor
+    z_soft: torch.Tensor
+    p_open: torch.Tensor
     magnitude: torch.Tensor
-    x_hat: torch.Tensor
 
 
 def _sample_gumbel_topk(
@@ -144,7 +142,7 @@ class GumbelTopKSAE(BaseSAE):
 
         return GumbelTopKSAEOutput(
             input=x, output=x_hat, c=c,
-            z=z_st, z_soft=z_soft, p_open=p_open, logits=logits, magnitude=magnitude
+            z=z_st, z_soft=z_soft, p_open=p_open, logits=None, magnitude=magnitude,
         )
 
     def compute_loss(self, output: GumbelTopKSAEOutput) -> SAELoss:
