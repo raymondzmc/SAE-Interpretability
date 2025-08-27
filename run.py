@@ -253,7 +253,8 @@ def train(
                                     sae.alpha.copy_(
                                         torch.clamp(
                                             sae.alpha + sae.alpha_lr * (m_d - float(sae.rho)),
-                                            min=0.0
+                                            min=-5.0,
+                                            max=5.0,
                                         )
                                     )
                                 else:

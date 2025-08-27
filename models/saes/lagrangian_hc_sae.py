@@ -86,7 +86,7 @@ def hard_concrete(
         z = torch.clamp(s_stretched, min=0.0, max=1.0)
     else:
         # Evaluation mode: use deterministic output
-        s = torch.sigmoid(logits)
+        s = torch.sigmoid(logits / beta)
         s_stretched = s * (r - l) + l
         z = torch.clamp(s_stretched, min=0.0, max=1.0)
 
@@ -200,7 +200,10 @@ class LagrangianHardConcreteSAE(BaseSAE):
         magnitude_pre = self.magnitude_encoder(x_centered)
 
         current_beta = self.beta.item() # Get current beta value from buffer
-        z = hard_concrete(gate_logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
+        logit_rho = math.log(self.rho / (1 - self.rho))
+        delta = current_beta * float(self.log_neg_l_over_r) + logit_rho
+        logits_cal = gate_logits + delta
+        z = hard_concrete(logits_cal, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
         
         # Apply threshold to z during evaluation
         if not self.training:
@@ -218,7 +221,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         # Reconstruct using the dictionary elements and final coefficients
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder_bias)
 
-        p_open = torch.sigmoid(gate_logits - float(self.beta.item()) * float(self.log_neg_l_over_r))
+        p_open = torch.sigmoid(gate_logits + logit_rho)
         return LagrangianHardConcreteSAEOutput(
             input=x,
             c=coefficients,
@@ -245,7 +248,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
         # Augmented Lagrangian
         c = m_d - self.rho
-        sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).sum()
+        sparsity_loss = (self.alpha.detach() * c).mean() + 0.5 * self.mu.item() * (c ** 2).mean()
 
         # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
