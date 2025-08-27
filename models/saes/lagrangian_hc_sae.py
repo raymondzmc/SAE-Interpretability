@@ -27,8 +27,6 @@ class LagrangianHardConcreteSAEConfig(SAEConfig):
     alpha_lr: float = Field(1e-2, description="Learning rate for alpha")
     rho: float = Field(0.05, description="Target sparsity level for Lagrangian dual-ascent controller")
     mu: float = Field(1.0, description="Regularization parameter for the sparsity loss")
-    bias_l2_coeff: float = Field(1e-3, description="L2 regularization for the gate encoder bias")
-    lb_coeff: float = Field(1e-3, description="Load balance regularization")
     
     @model_validator(mode="before")
     @classmethod
@@ -116,8 +114,6 @@ class LagrangianHardConcreteSAE(BaseSAE):
         initial_alpha: float = 1.0,
         alpha_lr: float = 1e-2,
         mse_coeff: float | None = None,
-        bias_l2_coeff: float = 1e-6, # L2 regularization for the gate encoder bias
-        lb_coeff: float = 1e-3, # Load balance regularization
         rho: float = 0.05,
         mu: float = 1.0,
         stretch_limits: tuple[float, float] = (-0.1, 1.1), # Stretch limits for Hard Concrete
@@ -135,8 +131,6 @@ class LagrangianHardConcreteSAE(BaseSAE):
             initial_alpha: Initial alpha for Lagrangian dual-ascent controller
             alpha_lr: Learning rate for alpha
             mse_coeff: Coefficient for MSE loss term
-            bias_l2_coeff: L2 regularization for the gate encoder bias
-            lb_coeff: Load balance regularization
             rho: Target sparsity level for Lagrangian controller
             stretch_limits: Stretch limits (l, r) for Hard Concrete. Must have l < 0 and r > 1.
             init_decoder_orthogonal: Initialize the decoder weights to be orthonormal
@@ -149,13 +143,11 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.input_size = input_size
         self.rho = rho
         self.mse_coeff = mse_coeff or 1.0
-        self.bias_l2_coeff = bias_l2_coeff
-        self.lb_coeff = lb_coeff
         self.alpha_lr = alpha_lr
         self.coefficient_threshold = coefficient_threshold
 
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size)
-        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
+        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
@@ -166,15 +158,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
         self.register_buffer("log_neg_l_over_r", torch.tensor(math.log(-self.l / self.r), dtype=torch.float32, device='cpu'))
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
-        # self.register_buffer("alpha", torch.tensor(initial_alpha, dtype=torch.float32, device='cpu'))
         self.register_buffer("alpha", torch.full((n_dict_components,), initial_alpha, dtype=torch.float32, device='cpu'))
         self.register_buffer("mu", torch.tensor(mu, dtype=torch.float32, device='cpu'))
-
-        logit_rho = math.log(self.rho / (1 - self.rho))
-        bias0 = logit_rho + float(self.beta) * float(self.log_neg_l_over_r)
-        self.register_buffer("gate_bias0", torch.full((n_dict_components,), bias0, dtype=torch.float32))
-
-        torch.nn.init.constant_(self.gate_encoder.bias, bias0)
         torch.nn.init.normal_(self.gate_encoder.weight, mean=0.0, std=0.02)
 
         if init_decoder_orthogonal:
@@ -210,9 +195,10 @@ class LagrangianHardConcreteSAE(BaseSAE):
         x_centered = self.encoder_layer_norm(x - self.decoder_bias) 
 
         # Get gate logits and magnitude from separate encoders
-        gate_logits = self.gate_encoder(x_centered) 
+        gate_logits = self.gate_encoder(x_centered)
+        gate_logits = gate_logits - gate_logits.mean(dim=-1, keepdim=True)
         magnitude_pre = self.magnitude_encoder(x_centered)
-        
+
         current_beta = self.beta.item() # Get current beta value from buffer
         z = hard_concrete(gate_logits, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
         
@@ -264,22 +250,13 @@ class LagrangianHardConcreteSAE(BaseSAE):
         # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
 
-        # Bias L2 loss
-        bias_l2 = ((self.gate_encoder.bias - self.gate_bias0)**2).sum()
-
-        # Load balance loss
-        q = (m_d / (m_d.sum() + 1e-12)).clamp_min(1e-12)
-        lb_entropy_loss = (q * q.log()).sum()
-
         # Total loss
-        loss = sparsity_loss + self.mse_coeff * mse_loss + self.bias_l2_coeff * bias_l2 + self.lb_coeff * lb_entropy_loss
+        loss = sparsity_loss + self.mse_coeff * mse_loss
         return SAELoss(
             loss=loss,
             loss_dict={
                 "mse_loss": mse_loss.detach().clone(),
                 "sparsity_loss": sparsity_loss.detach().clone(),
-                "bias_l2": bias_l2.detach().clone(),
-                "load_balance_loss": lb_entropy_loss.detach().clone(),
             },
         )
 
