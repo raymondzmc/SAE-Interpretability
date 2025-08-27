@@ -23,6 +23,7 @@ from models import (
     HardConcreteSAE,
     LagrangianHardConcreteSAE,
     LagrangianHardConcreteSAEConfig,
+    GumbelTopKSAE,
 )
 from models.loader import load_tlens_model, load_pretrained_saes
 from utils.enums import SAEType
@@ -245,7 +246,15 @@ def train(
             optimizer.zero_grad()
             grad_updates += 1
             lr_scheduler.step()
-            if config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
+
+            # Re-normalize decoder columns after each optimizer step
+            if config.saes.sae_type == SAEType.GUMBEL_TOPK:
+                with torch.no_grad():
+                    for sae_name, module in model.saes.named_modules():
+                        if isinstance(module, (GumbelTopKSAE)):
+                            W = module.decoder.weight
+                            module.decoder.weight.copy_(torch.nn.functional.normalize(W, dim=0))
+            elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
                 with torch.no_grad():
                     for sae_name, module in model.saes.named_modules():
                         if isinstance(module, (LagrangianHardConcreteSAE)):

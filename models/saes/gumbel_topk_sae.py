@@ -118,7 +118,7 @@ class GumbelTopKSAE(BaseSAE):
         x: (B, D_in) or (B, T, D_in)
         Returns z (sampled), z_soft (surrogate), p_open (confidence), magnitude, x_hat
         """
-        x_centered = x - self.decoder_bias
+        x_centered = x - self.decoder_bias if self.decoder_bias is not None else x
         logits = self.gate_encoder(x_centered)
 
         z_st, z_soft = _sample_gumbel_topk(
@@ -143,17 +143,16 @@ class GumbelTopKSAE(BaseSAE):
             # pick from "inactive" set by zeroing current winners (use z_hard as in output.z)
             z_soft = output.z_soft
             inactive_scores = z_soft * (1.0 - output.z)  # prefer near-miss losers
-            k_aux = min(self.aux_k, inactive_scores.size(-1) - self.k)
+            k_aux = max(0, min(self.aux_k, inactive_scores.size(-1) - self.k))
             if k_aux > 0:
                 _, aux_idx = torch.topk(inactive_scores, k=k_aux, dim=-1)
                 aux_mask = torch.zeros_like(inactive_scores).scatter_(-1, aux_idx, 1.0)
-                # reuse magnitude for selected aux, with DETACHED decoder (ghost grads)
-                aux_code = aux_mask * output.c.detach() / (output.z + 1e-12)  # magnitude for selected aux; safe divide
+                aux_code = aux_mask * output.magnitude
                 with torch.no_grad():
                     dec_w = F.normalize(self.decoder.weight.detach(), dim=0)
                 e_hat = F.linear(aux_code, dec_w, bias=None)
                 aux_loss = F.mse_loss(e_hat, e)
-                loss + self.aux_coeff * aux_loss
+                loss += self.aux_coeff * aux_loss
 
         return SAELoss(
             loss=loss,

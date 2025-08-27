@@ -58,11 +58,11 @@ def get_activations_for_sae_type(sae_output, sae_type: SAEType) -> torch.Tensor:
     elif sae_type == SAEType.RELU:
         return sae_output.c
     elif sae_type == SAEType.GATED:
-        return sae_output.z if hasattr(sae_output, 'z') else sae_output.c
+        return sae_output.z
     elif sae_type == SAEType.TOPK:
         return sae_output.code
     elif sae_type == SAEType.GUMBEL_TOPK:
-        return sae_output.z_st
+        return sae_output.c
     else:
         return sae_output.c  # Default to main activations
 
@@ -76,6 +76,7 @@ def compute_alive_dictionary_indices(activations: torch.Tensor) -> list[int]:
     Returns:
         List of indices of dictionary components that have non-zero activations
     """
+    assert activations.ndim == 3, "Activations must be a 3D tensor of shape (batch, seq_len, dict_size)"
     nonzero_indices = activations.sum(0).sum(0).nonzero().squeeze().cpu()
     if nonzero_indices.numel() == 0:
         return []
@@ -103,7 +104,7 @@ def reconstruction_metrics(output: SAETransformerOutput, sae_type: SAEType) -> d
             sae_output.output,
             sae_output.input,
             reduction='mean'
-        ).item()
+        )
         
         # Fix parameter order: pred first, target second
         var = explained_variance(
@@ -114,9 +115,9 @@ def reconstruction_metrics(output: SAETransformerOutput, sae_type: SAEType) -> d
         )
         
         # Add MSE to the metrics
-        reconstruction_metrics[f"mse/{name}"] = mse
-        reconstruction_metrics[f"explained_variance/{name}"] = var.mean()
-        reconstruction_metrics[f"explained_variance_ln/{name}"] = var_ln.mean()
+        reconstruction_metrics[f"mse/{name}"] = mse.item()
+        reconstruction_metrics[f"explained_variance/{name}"] = var.mean().item()
+        reconstruction_metrics[f"explained_variance_ln/{name}"] = var_ln.mean().item()
     return reconstruction_metrics
 
 
