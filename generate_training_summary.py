@@ -174,9 +174,10 @@ def generate_training_summary(entity: str, project: str, run_id: str,
     # Analyze each metric
     metrics_summary = {}
     
-    # Exclude non-metric columns
+    # Exclude non-metric columns and include only train/ and eval/ metrics
     exclude_cols = {'_step', '_runtime', '_timestamp'}
-    metric_columns = [col for col in history.columns if col not in exclude_cols]
+    metric_columns = [col for col in history.columns 
+                     if col not in exclude_cols and (col.startswith('train/') or col.startswith('eval/'))]
     
     print(f"\nAnalyzing {len(metric_columns)} metrics...")
     

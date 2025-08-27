@@ -208,7 +208,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     if config.saes.sae_type == SAEType.HARD_CONCRETE:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
-                        acts = sae_output.c
+                        acts = sae_output.z
                     elif config.saes.sae_type == SAEType.RELU:
                         acts = sae_output.c
                     elif config.saes.sae_type == SAEType.GATED:
@@ -217,6 +217,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                         acts = sae_output.code
                     else:
                         acts = sae_output.c  # Default to main activations
+                    if sae_pos == "blocks.2.hook_resid_pre":
+                        import pdb; pdb.set_trace()
 
                     # Update sparsity and alive components
                     metrics[sae_pos]['sparsity_l0'] += torch.norm(acts, p=0, dim=-1).mean().item() * n_tokens

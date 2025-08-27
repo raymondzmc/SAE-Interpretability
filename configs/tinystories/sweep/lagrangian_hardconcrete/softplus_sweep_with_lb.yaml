@@ -1,4 +1,4 @@
-rho: [0.05, 0.01, 0.005, 0.001, 0.0005]
+rho: [0.01]
 magnitude_activation: ["softplus"]
 wandb_run_name: ["softplus_lagrangian_hardconcrete_with_lb"]
 lb_coeff: [1e-3]

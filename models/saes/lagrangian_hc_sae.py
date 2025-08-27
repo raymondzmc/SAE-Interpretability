@@ -116,7 +116,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         initial_alpha: float = 1.0,
         alpha_lr: float = 1e-2,
         mse_coeff: float | None = None,
-        bias_l2_coeff: float = 1e-3, # L2 regularization for the gate encoder bias
+        bias_l2_coeff: float = 1e-6, # L2 regularization for the gate encoder bias
         lb_coeff: float = 1e-3, # Load balance regularization
         rho: float = 0.05,
         mu: float = 1.0,
@@ -170,8 +170,10 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.register_buffer("alpha", torch.full((n_dict_components,), initial_alpha, dtype=torch.float32, device='cpu'))
         self.register_buffer("mu", torch.tensor(mu, dtype=torch.float32, device='cpu'))
 
-        logit_rho = math.log(self.rho / (1 - self.rho))
         bias0 = logit_rho + float(self.beta) * float(self.log_neg_l_over_r)
+        logit_rho = math.log(self.rho / (1 - self.rho))
+        self.register_buffer("gate_bias0", torch.full((n_dict_components,), bias0, dtype=torch.float32))
+
         torch.nn.init.constant_(self.gate_encoder.bias, bias0)
         torch.nn.init.normal_(self.gate_encoder.weight, mean=0.0, std=0.02)
 
@@ -231,8 +233,20 @@ class LagrangianHardConcreteSAE(BaseSAE):
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder_bias)
 
         p_open = torch.sigmoid(gate_logits - float(self.beta.item()) * float(self.log_neg_l_over_r))
-
-        return LagrangianHardConcreteSAEOutput(input=x, c=coefficients, output=x_hat, logits=None, magnitude=magnitude, beta=current_beta, l=self.l, r=self.r, z=z, gate_logits=gate_logits, p_open=p_open, alpha=self.alpha)
+        return LagrangianHardConcreteSAEOutput(
+            input=x,
+            c=coefficients,
+            output=x_hat,
+            logits=None,
+            magnitude=magnitude,
+            beta=current_beta,
+            l=self.l,
+            r=self.r,
+            z=z,
+            gate_logits=gate_logits,
+            p_open=p_open,
+            alpha=self.alpha,
+        )
 
     def compute_loss(self, output: LagrangianHardConcreteSAEOutput) -> SAELoss:
         """Compute the loss for the HardConcreteSAE.
@@ -242,25 +256,30 @@ class LagrangianHardConcreteSAE(BaseSAE):
         """
         p = output.p_open
         m_d = p.mean(dim=(0, 1))
+
+        # Augmented Lagrangian
         c = m_d - self.rho
         sparsity_loss = (self.alpha.detach() * c).sum() + 0.5 * self.mu.item() * (c ** 2).mean()
 
-        # rho_hat = output.p_open.mean()
-        # sparsity_loss = self.alpha.detach() * (rho_hat - self.rho) + 0.5 * self.mu.item() * (rho_hat - self.rho)**2
+        # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
-        bias_l2 = self.bias_l2_coeff * (self.gate_encoder.bias.pow(2).sum())
-        
 
-        m = m_d / (m_d.sum() + 1e-8)
-        load_balance_loss = self.lb_coeff * (m * (m.clamp_min(1e-12).log() + math.log(self.n_dict_components))).sum()
-        loss = sparsity_loss + self.mse_coeff * mse_loss + bias_l2 + self.lb_coeff * load_balance_loss
+        # Bias L2 loss
+        bias_l2 = ((self.gate_encoder.bias - self.gate_bias0)**2).sum()
+
+        # Load balance loss
+        q = (m_d / (m_d.sum() + 1e-12)).clamp_min(1e-12)
+        lb_entropy_loss = (q * q.log()).sum()
+
+        # Total loss
+        loss = sparsity_loss + self.mse_coeff * mse_loss + self.bias_l2_coeff * bias_l2 + self.lb_coeff * lb_entropy_loss
         return SAELoss(
             loss=loss,
             loss_dict={
                 "mse_loss": mse_loss.detach().clone(),
                 "sparsity_loss": sparsity_loss.detach().clone(),
                 "bias_l2": bias_l2.detach().clone(),
-                "load_balance_loss": load_balance_loss.detach().clone(),
+                "load_balance_loss": lb_entropy_loss.detach().clone(),
             },
         )
 
