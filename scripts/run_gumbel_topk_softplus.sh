@@ -6,6 +6,6 @@ CUDA_VISIBLE_DEVICES=0 python run_experiments.py \
 --sweep_config configs/tinystories/sweep/gumbel_topk_sweep.yaml \
 --output_dir experiment_outputs/gumbel_topk_softplus_sweep
 
-CUDA_VISIBLE_DEVICES=1 python evaluation.py \
+CUDA_VISIBLE_DEVICES=0 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-gumbel-topk \
 --filter_runs_by_name gumbel_topk_softplus
