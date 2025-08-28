@@ -20,7 +20,7 @@ class HardConcreteSAEConfig(SAEConfig):
     initial_beta: float = Field(0.5, description="Initial beta for Hard Concrete annealing")
     final_beta: float | None = Field(None, description="Final beta for Hard Concrete annealing")
     hard_concrete_stretch_limits: tuple[float, float] = Field((-0.1, 1.1), description="Hard concrete stretch limits")
-    magnitude_activation: str | None = Field("relu", description="Activation function for magnitude ('relu', 'softplus', etc.) or None")
+    magnitude_activation: str | None = Field("softplus", description="Activation function for magnitude ('relu', 'softplus', etc.) or None")
 
 
 class HardConcreteSAEOutput(SAEOutput):
@@ -81,7 +81,7 @@ class HardConcreteSAE(BaseSAE):
         mse_coeff: float | None = None,
         stretch_limits: tuple[float, float] = (-0.1, 1.1), # Stretch limits for Hard Concrete
         init_decoder_orthogonal: bool = True,
-        magnitude_activation: str | None = "relu",
+        magnitude_activation: str | None = "softplus",
     ):
         super().__init__()
         self.n_dict_components = n_dict_components
