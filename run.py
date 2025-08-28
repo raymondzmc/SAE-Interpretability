@@ -7,6 +7,7 @@ Usage:
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+import math
 import torch
 import wandb
 from jaxtyping import Int
@@ -221,9 +222,9 @@ def train(
 
             # Update training progress for all SAE modules
             if config.data.n_train_samples is not None:
-                total_expected_grad_steps = config.data.n_train_samples // config.effective_batch_size
-                progress = grad_updates / total_expected_grad_steps
-                assert progress >= 0.0 and progress <= 1.0, f"Progress is out of bounds: {progress}"
+                expected_train_batches = math.ceil(config.data.n_train_samples / config.data.train_batch_size)
+                total_expected_grad_steps = expected_train_batches // config.gradient_accumulation_steps
+                progress = min(grad_updates / total_expected_grad_steps, 1.0)  # Clamp to [0,1]
                 with torch.no_grad():
                     for module in model.saes.modules():
                         if hasattr(module, 'train_progress'):
