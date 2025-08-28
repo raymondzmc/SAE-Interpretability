@@ -64,6 +64,13 @@ def kl_to_target(
     else:
         return kl.mean()
 
+
+def cosine_ramp(progress: torch.Tensor, end: float) -> torch.Tensor:
+    # progress in [0,1]; ramp in [0,end]
+    p = (progress / end).clamp(0, 1)
+    return 0.5 * (1 - torch.cos(torch.pi * p))
+
+
 class HardConcreteSAE(BaseSAE):
     def __init__(
         self,
@@ -131,9 +138,10 @@ class HardConcreteSAE(BaseSAE):
         l0_loss = expected_open_prob.mean()
         l1_loss = (output.z * output.magnitude.abs()).mean()
         kl_loss = kl_to_target(expected_open_prob, 0.005)
+
+        sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.3)
         sparsity_loss = 5 * kl_loss + 1 * l1_loss + 0.1 * l0_loss
         mse_loss = F.mse_loss(output.output, output.input)
-        sparsity_coeff = self.sparsity_coeff * self.train_progress
         loss = sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         loss_dict = {
             "mse_loss": mse_loss.detach().clone(),
