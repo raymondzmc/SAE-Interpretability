@@ -48,11 +48,11 @@ class HardConcreteSAE(BaseSAE):
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
-        self.encoder = torch.nn.Sequential(
-            torch.nn.Linear(input_size, n_dict_components // 10, bias=False),
-            torch.nn.Softplus(),
-            torch.nn.Linear(n_dict_components // 10, n_dict_components, bias=False),
-        )
+        # self.encoder = torch.nn.Sequential(
+        #     torch.nn.Linear(input_size, n_dict_components // 10, bias=False),
+        #     torch.nn.Softplus(),
+        #     torch.nn.Linear(n_dict_components // 10, n_dict_components, bias=False),
+        # )
 
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
         self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
@@ -84,16 +84,18 @@ class HardConcreteSAE(BaseSAE):
         return z
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
-        logits = self.encoder(x)
+        x_centered = x - self.decoder.bias
+        logits = F.linear(x_centered, self.dict_elements.t())
         z = self.hard_concrete(logits)
         magnitude = self.magnitude_activation(self.r_mag.exp() * logits + self.magnitude_bias)
         c = z * magnitude
-        x_hat = F.linear(c, self.dict_elements)
+        x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=logits)
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
-        log_ratio = math.log(-self.r / self.l)
-        sparsity_loss = torch.sigmoid(output.gate_logits - self.beta * log_ratio).mean()
+        # log_ratio = math.log(-self.r / self.l)
+        # sparsity_loss = torch.sigmoid(output.gate_logits - self.beta * log_ratio).mean()
+        sparsity_loss = (output.z * output.magnitude.abs()).mean()
         mse_loss = F.mse_loss(output.output, output.input)
         loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         loss_dict = {
