@@ -1,2 +1,2 @@
-sparsity_coeff: [0.01, 0.005]
+sparsity_coeff: [0.1, 0.005]
 initial_beta: [1.0]
