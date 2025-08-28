@@ -90,12 +90,6 @@ class GumbelTopKSAE(BaseSAE):
         self.gumbel_temp = float(gumbel_temperature)
         self.aux_k = aux_k
         self.aux_coeff = aux_coeff
-
-        # Encoders/Decoder
-        # self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
-        # self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
-        # self.gate_dropout = torch.nn.Dropout(gate_dropout) if gate_dropout is not None else None
-        # self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
         self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
@@ -106,9 +100,6 @@ class GumbelTopKSAE(BaseSAE):
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
-        # if tied_encoder_init:
-            # self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
-            # self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
 
     @property
     def dict_elements(self):
@@ -124,17 +115,7 @@ class GumbelTopKSAE(BaseSAE):
         x_dir = x_centered / (x_centered.norm(dim=-1, keepdim=True) + 1e-8)
         encoder_out = F.linear(x_dir, self.dict_elements.t())
         z_st, z_soft = _sample_gumbel_topk(encoder_out, K=self.k, temp=self.gumbel_temp, training=self.training)
-        
         magnitude = self.magnitude_activation(self.r_mag.exp() * encoder_out + self.magnitude_bias)
-        # logits = self.gate_encoder(x_centered)
-        # logits = logits - logits.mean(dim=-1, keepdim=True)
-
-        # z_st, z_soft = _sample_gumbel_topk(
-        #     logits, K=self.k, temp=self.gumbel_temp, training=self.training
-        # )
-        # mag_pre = self.magnitude_encoder(x_centered)
-        # magnitude = self.magnitude_activation(mag_pre) if self.magnitude_activation else mag_pre
-
         c = z_st * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
 
@@ -148,9 +129,8 @@ class GumbelTopKSAE(BaseSAE):
         aux_loss = torch.zeros((), device=output.input.device)
         if self.training and self.aux_coeff and self.aux_k:
             e = output.input - output.output
-            # pick from "inactive" set by zeroing current winners (use z_hard as in output.z)
             z_soft = output.z_soft
-            inactive_scores = z_soft * (1.0 - output.z)  # prefer near-miss losers
+            inactive_scores = z_soft * (1.0 - output.z)
             k_aux = max(0, min(self.aux_k, inactive_scores.size(-1) - self.k))
             if k_aux > 0:
                 _, aux_idx = torch.topk(inactive_scores, k=k_aux, dim=-1)

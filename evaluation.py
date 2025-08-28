@@ -141,7 +141,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
             print(f"Obtaining features for {run_id}")
 
             # Load model and dataloader
-            _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed)
+            _, eval_loader = create_dataloaders(data_config=config.data, global_seed=config.seed, quick_eval=True)
             total_tokens = 0
             all_token_ids: list[list[str]] = []
 
