@@ -33,7 +33,7 @@ class HardConcreteSAEOutput(SAEOutput):
 
 def kl_to_target(
     p_open: torch.Tensor,
-    rho: 0.005,
+    rho: float = 0.005,
     reduction: str = "mean",
     eps: float = 1e-8,
 ) -> torch.Tensor:
@@ -88,16 +88,8 @@ class HardConcreteSAE(BaseSAE):
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
-        # self.encoder = torch.nn.Sequential(
-        #     torch.nn.Linear(input_size, n_dict_components // 10, bias=False),
-        #     torch.nn.Softplus(),
-        #     torch.nn.Linear(n_dict_components // 10, n_dict_components, bias=False),
-        # )
-
+        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
-        self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
-        self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
-
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
 
         # Register beta as a buffer to allow updates during training without being a model parameter
@@ -108,6 +100,9 @@ class HardConcreteSAE(BaseSAE):
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
+
+        with torch.no_grad():
+            self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
 
     def hard_concrete(self, logits: torch.Tensor) -> torch.Tensor:
         """
@@ -126,12 +121,13 @@ class HardConcreteSAE(BaseSAE):
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
         x_centered = x - self.decoder.bias
-        logits = F.linear(x_centered, self.dict_elements.t())
-        z = self.hard_concrete(logits)
-        magnitude = self.magnitude_activation(self.r_mag.exp() * logits + self.magnitude_bias)
+        gate_logits = F.linear(x_centered, self.dict_elements.t())
+        z = self.hard_concrete(gate_logits)
+
+        magnitude = self.magnitude_activation(self.magnitude_encoder(x_centered))
         c = z * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
-        return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=logits)
+        return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=gate_logits)
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
         expected_open_prob = torch.sigmoid(output.gate_logits - self.beta * math.log(-self.l / self.r))
