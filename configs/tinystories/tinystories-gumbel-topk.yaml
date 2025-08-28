@@ -45,7 +45,7 @@ saes:
   init_decoder_orthogonal: true
   sparsity_coeff: 0.1
   k: 4
-  gumbel_temperature: 3.0
+  gumbel_temperature: 1.0
   magnitude_activation: "softplus"
   init_decoder_orthogonal: true
   tied_encoder_init: true

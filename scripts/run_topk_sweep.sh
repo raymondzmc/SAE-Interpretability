@@ -8,5 +8,5 @@ CUDA_VISIBLE_DEVICES=0 python run_experiments.py \
 --output_dir experiment_outputs/topk_sweep
 
 CUDA_VISIBLE_DEVICES=0 python evaluation.py \
---wandb_project tinystories-1m \
+--wandb_project raymondl/tinystories-1m \
 --filter_runs_by_name topk
