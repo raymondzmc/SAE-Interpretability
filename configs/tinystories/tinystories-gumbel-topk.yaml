@@ -50,5 +50,5 @@ saes:
   init_decoder_orthogonal: true
   tied_encoder_init: true
   decoder_bias: true
-  aux_k: 32
+  aux_k: 258
   aux_coeff: 0.03

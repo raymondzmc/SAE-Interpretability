@@ -207,7 +207,7 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     
                     # Get activations using the shared function from utils.metrics
                     acts = get_activations_for_sae_type(sae_output, config.saes.sae_type)
-                    
+
                     # Compute L0 sparsity using the same logic as utils/metrics.py
                     l0_val = torch.norm(acts, p=0, dim=-1).mean().item()
                     metrics[sae_pos]['sparsity_l0'] += l0_val * n_tokens
@@ -215,6 +215,8 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     # Compute alive dictionary components using the shared helper function
                     alive_indices = compute_alive_dictionary_indices(acts)
                     metrics[sae_pos]['alive_dict_components'].update(alive_indices)
+                    if sae_pos == "blocks.6.hook_resid_pre":
+                        import pdb; pdb.set_trace()
 
                     if args.save_activation_data:
                         # Collect non-zero activations for explanation generation

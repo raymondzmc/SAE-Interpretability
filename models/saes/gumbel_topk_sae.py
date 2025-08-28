@@ -80,7 +80,6 @@ class GumbelTopKSAE(BaseSAE):
         decoder_bias: bool = True,
         aux_k: int | None = None,
         aux_coeff: float | None = None,
-        gate_dropout: float | None = None,
     ):
         super().__init__()
         self.input_size = input_size
@@ -97,6 +96,10 @@ class GumbelTopKSAE(BaseSAE):
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
         self.decoder_bias = torch.nn.Parameter(torch.zeros(input_size)) if decoder_bias else None
 
+        self.register_buffer("gate_mean", torch.zeros(n_dict_components))
+        self.register_buffer("gate_var", torch.ones(n_dict_components))
+        self.gate_momentum = 0.01
+        self.gate_eps = 1e-5
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
@@ -105,6 +108,22 @@ class GumbelTopKSAE(BaseSAE):
     def dict_elements(self):
         # Normalize dictionary columns
         return F.normalize(self.decoder.weight, dim=0)
+    
+    def _gate_standardize(self, pre: torch.Tensor) -> torch.Tensor:
+        # pre: (..., n)
+        # reduce over all non-feature dims
+        reduce_dims = tuple(range(pre.ndim - 1))
+        with torch.no_grad():
+            batch_mean = pre.mean(dim=reduce_dims)
+            batch_var = pre.var(dim=reduce_dims, unbiased=False)
+            # EMA update
+            self.gate_mean.lerp_(batch_mean, self.gate_momentum)
+            self.gate_var.lerp_(batch_var, self.gate_momentum)
+        # standardize (allow broadcast)
+        mean = self.gate_mean.view(*((1,) * (pre.ndim - 1)), -1)
+        var = self.gate_var.view(*((1,) * (pre.ndim - 1)), -1)
+        pre_std = (pre - mean) / (var.add(self.gate_eps).sqrt())
+        return pre_std
 
     def forward(self, x: torch.Tensor) -> GumbelTopKSAEOutput:
         """
@@ -112,9 +131,12 @@ class GumbelTopKSAE(BaseSAE):
         Returns z (sampled), z_soft (surrogate), p_open (confidence), magnitude, x_hat
         """
         x_centered = x - self.decoder_bias if self.decoder_bias is not None else x
-        x_dir = x_centered / (x_centered.norm(dim=-1, keepdim=True) + 1e-8)
-        encoder_out = F.linear(x_dir, self.dict_elements.t())
-        z_st, z_soft = _sample_gumbel_topk(encoder_out, K=self.k, temp=self.gumbel_temp, training=self.training)
+        encoder_out = F.linear(x_centered, self.dict_elements.t())
+        pre_gate = self._gate_standardize(encoder_out) if self.training else (
+            (encoder_out - self.gate_mean.view(*((1,)*(encoder_out.ndim-1)),-1)) /
+            (self.gate_var.add(self.gate_eps).sqrt().view(*((1,)*(encoder_out.ndim-1)),-1))
+        )
+        z_st, z_soft = _sample_gumbel_topk(pre_gate, K=self.k, temp=self.gumbel_temp, training=self.training)
         magnitude = self.magnitude_activation(self.r_mag.exp() * encoder_out + self.magnitude_bias)
         c = z_st * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)

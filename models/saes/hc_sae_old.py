@@ -124,14 +124,12 @@ class HardConcreteSAE(BaseSAE):
             # Parameter-based gates: encoder only outputs magnitude, gates are nn.Parameter
             self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
             self.gate_logits = torch.nn.Parameter(torch.randn(n_dict_components))
-            
-        self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
 
+        self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
         self.n_dict_components = n_dict_components
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
-        self.inference_threshold = 1e-6
 
         # Register beta as a buffer to allow updates during training without being a model parameter
         # Create on CPU first, will be moved to correct device by .to() call
