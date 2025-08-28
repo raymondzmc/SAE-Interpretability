@@ -127,16 +127,21 @@ class HardConcreteSAE(BaseSAE):
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=logits)
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
-        expected_open_prob = torch.sigmoid(output.gate_logits - self.beta * math.log(-self.r / self.l))
+        expected_open_prob = torch.sigmoid(output.gate_logits - self.beta * math.log(-self.l / self.r))
         l0_loss = expected_open_prob.mean()
         l1_loss = (output.z * output.magnitude.abs()).mean()
         kl_loss = kl_to_target(expected_open_prob, 0.005)
-        sparsity_loss = 5 * kl_loss + 1 * l1_loss + 0.5 * l0_loss
+        sparsity_loss = 5 * kl_loss + 1 * l1_loss + 0.1 * l0_loss
         mse_loss = F.mse_loss(output.output, output.input)
-        loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
+        sparsity_coeff = self.sparsity_coeff * self.train_progress
+        loss = sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         loss_dict = {
             "mse_loss": mse_loss.detach().clone(),
             "sparsity_loss": sparsity_loss.detach().clone(),
+            "training_progress": self.train_progress.detach().clone(),
+            "l0_loss": l0_loss.detach().clone(),
+            "l1_loss": l1_loss.detach().clone(),
+            "kl_loss": kl_loss.detach().clone(),
         }
         return SAELoss(loss=loss, loss_dict=loss_dict)
 
