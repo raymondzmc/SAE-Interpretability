@@ -8,7 +8,7 @@ from utils.enums import SAEType
 ACTIVATION_MAP: dict[str, Callable] = {
     "relu": F.relu,
     "softplus": F.softplus,
-    "none": None,
+    "none": lambda x: x,
 }
 
 class GumbelTopKSAEConfig(SAEConfig):
@@ -92,9 +92,12 @@ class GumbelTopKSAE(BaseSAE):
         self.aux_coeff = aux_coeff
 
         # Encoders/Decoder
-        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
-        self.gate_dropout = torch.nn.Dropout(gate_dropout) if gate_dropout is not None else None
-        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        # self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        # self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        # self.gate_dropout = torch.nn.Dropout(gate_dropout) if gate_dropout is not None else None
+        # self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
+        self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
@@ -118,14 +121,19 @@ class GumbelTopKSAE(BaseSAE):
         Returns z (sampled), z_soft (surrogate), p_open (confidence), magnitude, x_hat
         """
         x_centered = x - self.decoder_bias if self.decoder_bias is not None else x
-        logits = self.gate_encoder(x_centered)
-        logits = logits - logits.mean(dim=-1, keepdim=True)
+        x_dir = x_centered / (x_centered.norm(dim=-1, keepdim=True) + 1e-8)
+        pre = F.linear(x_dir, self.dict_elements.t())
+        z_st, z_soft = _sample_gumbel_topk(pre, K=self.k, temp=self.gumbel_temp, training=self.training)
+        
+        magnitude = self.magnitude_activation(self.r_mag.exp() * pre + self.magnitude_bias)
+        # logits = self.gate_encoder(x_centered)
+        # logits = logits - logits.mean(dim=-1, keepdim=True)
 
-        z_st, z_soft = _sample_gumbel_topk(
-            logits, K=self.k, temp=self.gumbel_temp, training=self.training
-        )
-        mag_pre = self.magnitude_encoder(x_centered)
-        magnitude = self.magnitude_activation(mag_pre) if self.magnitude_activation else mag_pre
+        # z_st, z_soft = _sample_gumbel_topk(
+        #     logits, K=self.k, temp=self.gumbel_temp, training=self.training
+        # )
+        # mag_pre = self.magnitude_encoder(x_centered)
+        # magnitude = self.magnitude_activation(mag_pre) if self.magnitude_activation else mag_pre
 
         c = z_st * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
