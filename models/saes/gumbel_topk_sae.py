@@ -80,6 +80,7 @@ class GumbelTopKSAE(BaseSAE):
         decoder_bias: bool = True,
         aux_k: int | None = None,
         aux_coeff: float | None = None,
+        gate_dropout: float | None = None,
     ):
         super().__init__()
         self.input_size = input_size
@@ -91,8 +92,9 @@ class GumbelTopKSAE(BaseSAE):
         self.aux_coeff = aux_coeff
 
         # Encoders/Decoder
-        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
-        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
+        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        self.gate_dropout = torch.nn.Dropout(gate_dropout) if gate_dropout is not None else None
+        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
@@ -104,9 +106,6 @@ class GumbelTopKSAE(BaseSAE):
         if tied_encoder_init:
             self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
             self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
-
-        torch.nn.init.zeros_(self.gate_encoder.bias)
-        torch.nn.init.zeros_(self.magnitude_encoder.bias)
 
     @property
     def dict_elements(self):
@@ -120,6 +119,7 @@ class GumbelTopKSAE(BaseSAE):
         """
         x_centered = x - self.decoder_bias if self.decoder_bias is not None else x
         logits = self.gate_encoder(x_centered)
+        logits = logits - logits.mean(dim=-1, keepdim=True)
 
         z_st, z_soft = _sample_gumbel_topk(
             logits, K=self.k, temp=self.gumbel_temp, training=self.training
@@ -159,8 +159,6 @@ class GumbelTopKSAE(BaseSAE):
             loss_dict={
                 "mse_loss": loss.detach().clone(),
                 "aux_loss": aux_loss.detach().clone(),
-                "sum_z_mean": output.z.sum(dim=-1).mean().detach().clone(),
-                "sum_z_soft_mean": output.z_soft.sum(dim=-1).mean().detach().clone(),
             },
         )
 
