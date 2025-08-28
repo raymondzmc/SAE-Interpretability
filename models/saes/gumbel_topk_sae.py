@@ -106,9 +106,9 @@ class GumbelTopKSAE(BaseSAE):
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
-        if tied_encoder_init:
-            self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
-            self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
+        # if tied_encoder_init:
+            # self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
+            # self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
 
     @property
     def dict_elements(self):
