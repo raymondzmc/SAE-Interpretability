@@ -101,6 +101,12 @@ class GumbelTopKSAE(BaseSAE):
         self.gate_momentum = 0.01
         self.gate_eps = 1e-5
 
+        # Usage balancing (EMA of per-feature selection frequency)
+        self.register_buffer("usage_ema", torch.full((n_dict_components,), 1.0 / n_dict_components))
+        self.usage_momentum = 0.01
+        self.usage_eps = 1e-6
+        self.usage_prior_weight = 0.1
+
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
 
@@ -131,15 +137,28 @@ class GumbelTopKSAE(BaseSAE):
         Returns z (sampled), z_soft (surrogate), p_open (confidence), magnitude, x_hat
         """
         x_centered = x - self.decoder_bias if self.decoder_bias is not None else x
-        encoder_out = F.linear(x_centered, self.dict_elements.t())
+        x_dir = x_centered / (x_centered.norm(dim=-1, keepdim=True) + 1e-8)
+        encoder_out = F.linear(x_dir, self.dict_elements.t())
         pre_gate = self._gate_standardize(encoder_out) if self.training else (
             (encoder_out - self.gate_mean.view(*((1,)*(encoder_out.ndim-1)),-1)) /
             (self.gate_var.add(self.gate_eps).sqrt().view(*((1,)*(encoder_out.ndim-1)),-1))
         )
+        # Usage-balanced prior (train only): rare features get a small bonus
+        if self.training and self.usage_prior_weight > 0.0:
+            prior = -torch.log(self.usage_ema + self.usage_eps)  # shape [n]
+            prior = prior.view(*((1,) * (pre_gate.ndim - 1)), -1)
+            pre_gate = pre_gate + self.usage_prior_weight * prior
+
         z_st, z_soft = _sample_gumbel_topk(pre_gate, K=self.k, temp=self.gumbel_temp, training=self.training)
         magnitude = self.magnitude_activation(self.r_mag.exp() * encoder_out + self.magnitude_bias)
         c = z_st * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
+
+        # Update usage EMA (how often each feature wins on this batch)
+        if self.training:
+            sel = z_st.reshape(-1, z_st.size(-1)).float()  # (N_tokens, n)
+            batch_usage = sel.mean(dim=0)                  # [n]
+            self.usage_ema.lerp_(batch_usage, self.usage_momentum)
 
         return GumbelTopKSAEOutput(
             input=x, output=x_hat, c=c,
