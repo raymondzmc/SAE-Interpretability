@@ -145,7 +145,7 @@ class GumbelTopKSAE(BaseSAE):
         )
         # Usage-balanced prior (train only): rare features get a small bonus
         if self.training and self.usage_prior_weight > 0.0:
-            prior = -torch.log(self.usage_ema + self.usage_eps)  # shape [n]
+            prior = -torch.log(self.usage_ema.detach() + self.usage_eps)  # shape [n]
             prior = prior.view(*((1,) * (pre_gate.ndim - 1)), -1)
             pre_gate = pre_gate + self.usage_prior_weight * prior
 
@@ -156,7 +156,7 @@ class GumbelTopKSAE(BaseSAE):
 
         # Update usage EMA (how often each feature wins on this batch)
         if self.training:
-            sel = z_st.reshape(-1, z_st.size(-1)).float()  # (N_tokens, n)
+            sel = z_st.detach().reshape(-1, z_st.size(-1)).float()  # (N_tokens, n)
             batch_usage = sel.mean(dim=0)                  # [n]
             self.usage_ema.lerp_(batch_usage, self.usage_momentum)
 
