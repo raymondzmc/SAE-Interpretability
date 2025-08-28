@@ -54,7 +54,7 @@ class HardConcreteSAE(BaseSAE):
             torch.nn.Linear(n_dict_components // 10, n_dict_components, bias=False),
         )
 
-        # self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
+        self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
         # self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
         # self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
 
