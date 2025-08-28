@@ -215,8 +215,6 @@ def run_evaluation(args: argparse.Namespace) -> None:
                     # Compute alive dictionary components using the shared helper function
                     alive_indices = compute_alive_dictionary_indices(acts)
                     metrics[sae_pos]['alive_dict_components'].update(alive_indices)
-                    if sae_pos == "blocks.6.hook_resid_pre":
-                        import pdb; pdb.set_trace()
 
                     if args.save_activation_data:
                         # Collect non-zero activations for explanation generation
