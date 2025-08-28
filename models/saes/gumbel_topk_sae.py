@@ -122,10 +122,10 @@ class GumbelTopKSAE(BaseSAE):
         """
         x_centered = x - self.decoder_bias if self.decoder_bias is not None else x
         x_dir = x_centered / (x_centered.norm(dim=-1, keepdim=True) + 1e-8)
-        pre = F.linear(x_dir, self.dict_elements.t())
-        z_st, z_soft = _sample_gumbel_topk(pre, K=self.k, temp=self.gumbel_temp, training=self.training)
+        encoder_out = F.linear(x_dir, self.dict_elements.t())
+        z_st, z_soft = _sample_gumbel_topk(encoder_out, K=self.k, temp=self.gumbel_temp, training=self.training)
         
-        magnitude = self.magnitude_activation(self.r_mag.exp() * pre + self.magnitude_bias)
+        magnitude = self.magnitude_activation(self.r_mag.exp() * encoder_out + self.magnitude_bias)
         # logits = self.gate_encoder(x_centered)
         # logits = logits - logits.mean(dim=-1, keepdim=True)
 
