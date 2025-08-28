@@ -20,7 +20,7 @@ class HardConcreteSAEConfig(SAEConfig):
     initial_beta: float = Field(0.5, description="Initial beta for Hard Concrete annealing")
     final_beta: float | None = Field(None, description="Final beta for Hard Concrete annealing")
     hard_concrete_stretch_limits: tuple[float, float] = Field((-0.1, 1.1), description="Hard concrete stretch limits")
-    magnitude_activation: str | None = Field("softplus", description="Activation function for magnitude ('relu', 'softplus', etc.) or None")
+    magnitude_activation: str | None = Field("relu", description="Activation function for magnitude ('relu', 'softplus', etc.) or None")
 
 
 class HardConcreteSAEOutput(SAEOutput):
@@ -48,10 +48,15 @@ class HardConcreteSAE(BaseSAE):
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(input_size, n_dict_components // 10, bias=False),
+            torch.nn.Softplus(),
+            torch.nn.Linear(n_dict_components // 10, n_dict_components, bias=False),
+        )
 
-        self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
-        self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
-        self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
+        # self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
+        # self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
+        # self.magnitude_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
 
@@ -79,12 +84,11 @@ class HardConcreteSAE(BaseSAE):
         return z
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
-        x_centered = x - self.decoder.bias
-        logits = F.linear(x_centered, self.dict_elements.t())
+        logits = self.encoder(x)
         z = self.hard_concrete(logits)
         magnitude = self.magnitude_activation(self.r_mag.exp() * logits + self.magnitude_bias)
         c = z * magnitude
-        x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
+        x_hat = F.linear(c, self.dict_elements)
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=logits)
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:

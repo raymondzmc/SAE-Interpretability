@@ -139,7 +139,6 @@ def sparsity_metrics(output: SAETransformerOutput, sae_type: SAEType) -> dict[st
         
         # Use consistent L0 norm calculation for all SAE types
         l_0_norm = torch.norm(acts, p=0, dim=-1).mean().item()
-        frac_zeros = ((acts == 0).sum() / acts.numel()).item()
         
         # Compute alive dictionary components (always computed now)
         alive_indices = compute_alive_dictionary_indices(acts)
@@ -148,7 +147,6 @@ def sparsity_metrics(output: SAETransformerOutput, sae_type: SAEType) -> dict[st
 
         # Store with consistent naming for cross-SAE comparison
         sparsity_metrics[f"L_0/{name}"] = l_0_norm
-        sparsity_metrics[f"frac_zeros/{name}"] = frac_zeros
 
     return sparsity_metrics
 
