@@ -218,6 +218,16 @@ def train(
             grad_updates += 1
             lr_scheduler.step()
 
+            # Update training progress for all SAE modules
+            if config.data.n_train_samples is not None:
+                total_expected_grad_steps = config.data.n_train_samples // config.effective_batch_size
+                progress = grad_updates / total_expected_grad_steps
+                assert progress >= 0.0 and progress <= 1.0, f"Progress is out of bounds: {progress}"
+                with torch.no_grad():
+                    for module in model.saes.modules():
+                        if hasattr(module, 'train_progress'):
+                            module.train_progress.fill_(progress)
+
             # Re-normalize decoder columns after each optimizer step
             if config.saes.sae_type == SAEType.GUMBEL_TOPK:
                 with torch.no_grad():

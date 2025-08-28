@@ -31,6 +31,39 @@ class HardConcreteSAEOutput(SAEOutput):
     gate_logits: torch.Tensor
 
 
+def kl_to_target(
+    p_open: torch.Tensor,
+    rho: 0.005,
+    reduction: str = "mean",
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """
+    KL(q || rho) for Bernoulli gates, elementwise over p_open, reduced to a scalar.
+
+    Args:
+        p_open: Tensor of open probabilities q \in [0,1], any shape.
+                (For Hard-Concrete, use the expected-open surrogate; see helper below.)
+        rho:    Target open probability in (0,1), typically K / n_dict.
+        reduction: "mean" | "sum" | "none".
+        eps:   Small epsilon for numerical stability.
+
+    Returns:
+        Scalar loss if reduction != "none"; else same shape as p_open.
+    """
+    # clamp both q and ρ away from {0,1} to avoid log(0)
+    q = p_open.clamp(min=eps, max=1.0 - eps)
+    rho_t = torch.as_tensor(rho, dtype=q.dtype, device=q.device).clamp(min=eps, max=1.0 - eps)
+
+    # KL(q||ρ) = q log(q/ρ) + (1-q) log((1-q)/(1-ρ))
+    kl = q * (torch.log(q) - torch.log(rho_t)) + (1.0 - q) * (torch.log(1.0 - q) - torch.log(1.0 - rho_t))
+
+    if reduction == "none":
+        return kl
+    elif reduction == "sum":
+        return kl.sum()
+    else:
+        return kl.mean()
+
 class HardConcreteSAE(BaseSAE):
     def __init__(
         self,
@@ -62,6 +95,7 @@ class HardConcreteSAE(BaseSAE):
 
         # Register beta as a buffer to allow updates during training without being a model parameter
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
+        self.register_buffer("train_progress", torch.tensor(0.0, dtype=torch.float32, device='cpu'))
         self.l, self.r = stretch_limits
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
 
@@ -93,9 +127,11 @@ class HardConcreteSAE(BaseSAE):
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=logits)
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
-        # log_ratio = math.log(-self.r / self.l)
-        # sparsity_loss = torch.sigmoid(output.gate_logits - self.beta * log_ratio).mean()
-        sparsity_loss = (output.z * output.magnitude.abs()).mean()
+        expected_open_prob = torch.sigmoid(output.gate_logits - self.beta * math.log(-self.r / self.l))
+        l0_loss = expected_open_prob.mean()
+        l1_loss = (output.z * output.magnitude.abs()).mean()
+        kl_loss = kl_to_target(expected_open_prob, 0.005)
+        sparsity_loss = 5 * kl_loss + 1 * l1_loss + 0.5 * l0_loss
         mse_loss = F.mse_loss(output.output, output.input)
         loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         loss_dict = {
