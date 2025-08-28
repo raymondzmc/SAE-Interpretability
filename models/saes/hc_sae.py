@@ -88,8 +88,8 @@ class HardConcreteSAE(BaseSAE):
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=logits)
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
-        log_ratio = math.log(self.r / self.l)
-        sparsity_loss = torch.sigmoid(output.gate_logits - self.beta * log_ratio)
+        log_ratio = math.log(-self.r / self.l)
+        sparsity_loss = torch.sigmoid(output.gate_logits - self.beta * log_ratio).mean()
         mse_loss = F.mse_loss(output.output, output.input)
         loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         loss_dict = {
