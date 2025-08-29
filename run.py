@@ -262,7 +262,7 @@ def train(
                             key = sae_name.replace("-", ".")
                             if acc_token_cnt[key] > 0:
                                 rho_hat = (acc_open_sum[key] / acc_token_cnt[key]).mean()
-                                if grad_updates >= warmup_steps:
+                                if grad_updates >= warmup_steps * 20:
                                     sae.dual_ascent_update_alpha(rho_hat)
                                 else:
                                     sae.alpha.zero_()

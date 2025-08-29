@@ -111,7 +111,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         
         self.inference_mode = "topk"
         self.inference_topk = int(round(self.rho * self.n_dict_components))
-        self.score_use_magnitude = False
+        self.score_use_magnitude = True
     
     def hard_concrete(self, logits: torch.Tensor) -> torch.Tensor:
         """
