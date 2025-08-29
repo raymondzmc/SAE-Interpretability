@@ -15,7 +15,7 @@ gradient_accumulation_steps: 1
 lr: 1e-3
 lr_schedule: cosine
 min_lr_factor: 0.1
-warmup_samples: 20_000
+warmup_samples: 1_000
 max_grad_norm: 1.0
 log_every_n_grad_steps: 20
 
