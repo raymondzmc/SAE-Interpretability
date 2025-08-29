@@ -244,12 +244,16 @@ def train(
             lr_scheduler.step()
 
             # Re-normalize decoder columns after each optimizer step
-            if config.saes.sae_type == SAEType.GUMBEL_TOPK:
+            if config.saes.sae_type in [SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE]:
                 with torch.no_grad():
                     for sae_name, module in model.saes.named_modules():
-                        if isinstance(module, (GumbelTopKSAE)):
+                        if hasattr(module, "decoder"):
                             W = module.decoder.weight
                             module.decoder.weight.copy_(torch.nn.functional.normalize(W, dim=0))
+                        if hasattr(module, "gate_encoder"):
+                            W = module.gate_encoder.weight
+                            module.gate_encoder.weight.copy_(torch.nn.functional.normalize(W, dim=0))
+
             elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
                 with torch.no_grad():
                     for sae_name, module in model.saes.named_modules():

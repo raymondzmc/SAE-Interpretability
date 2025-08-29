@@ -87,7 +87,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.coefficient_threshold = coefficient_threshold
 
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
-        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        # self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
@@ -101,11 +101,11 @@ class LagrangianHardConcreteSAE(BaseSAE):
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
 
-        if tied_encoder_init:
-            self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
+        # if tied_encoder_init:
+        #     self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
         
-        if self.gate_encoder.bias is not None:
-            self.gate_encoder.bias.data.fill_(math.log(self.rho / (1 - self.rho)))
+        # if self.gate_encoder.bias is not None:
+        #     self.gate_encoder.bias.data.fill_(math.log(self.rho / (1 - self.rho)))
         
         self.inference_mode = "topk"
         self.inference_topk = int(round(self.rho * self.n_dict_components))
