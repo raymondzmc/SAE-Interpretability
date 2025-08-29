@@ -183,17 +183,37 @@ class LagrangianHardConcreteSAE(BaseSAE):
         Args:
             output: The output of the HardConcreteSAE.
         """
+        q = output.p_open                      # [B,T,D], built from shifted logits
+        B, T, D = q.shape
 
-        # Lagrangian dual-ascent controller (Lagrangian multiplier)
-        c = output.p_open.mean() - self.rho
-        expected_K = output.p_open.sum(dim=-1).mean()
-        sparsity_loss = self.alpha.detach() * c.clamp_min(0.0) + (0.05 * c**2)
+        # 1) per-token entropy bonus
+        p_bt = q / (q.sum(dim=-1, keepdim=True) + 1e-8)     # normalized per token
+        H_token = -(p_bt.clamp_min(1e-8) * p_bt.clamp_min(1e-8).log()).sum(dim=-1).mean()
 
-        # MSE loss
-        mse_loss = F.mse_loss(output.output, output.input)
+        # 2) batch load-balance (MoE style)
+        usage = q.sum(dim=(0,1))                              # [D]
+        p_feat = usage / (usage.sum() + 1e-8)
+        lb_kl = (p_feat * (p_feat.clamp_min(1e-8).log() - math.log(1.0 / D))).sum()
 
-        # Total loss
-        loss = sparsity_loss + self.mse_coeff * mse_loss
+        # 3) your K controller (lower-bound or band) on the *expected* K
+        K_per_pos = q.sum(dim=-1)                              # [B,T]
+        rho_hat = (K_per_pos / D).mean()
+        g = self.rho - rho_hat                                 # >0 if too sparse
+        lag = (self.alpha.detach() * g.clamp_min(0.0))
+        mse = F.mse_loss(output.output, output.input)
+        loss = self.mse_coeff*mse + lag + 0.02*lb_kl - 0.02*H_token
+
+
+        # # Lagrangian dual-ascent controller (Lagrangian multiplier)
+        # c = output.p_open.mean() - self.rho
+        # expected_K = output.p_open.sum(dim=-1).mean()
+        # sparsity_loss = self.alpha.detach() * c.clamp_min(0.0) + (0.05 * c**2)
+
+        # # MSE loss
+        # mse_loss = F.mse_loss(output.output, output.input)
+
+        # # Total loss
+        # loss = sparsity_loss + self.mse_coeff * mse_loss
         return SAELoss(
             loss=loss,
             loss_dict={
