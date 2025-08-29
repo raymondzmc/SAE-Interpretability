@@ -89,6 +89,7 @@ class HardConcreteSAE(BaseSAE):
         magnitude_activation: str | None = "softplus0",
     ):
         super().__init__()
+        self.encoder_layer_norm = torch.nn.LayerNorm(input_size, bias=False)
         self.n_dict_components = n_dict_components
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
@@ -127,11 +128,11 @@ class HardConcreteSAE(BaseSAE):
         return z
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
-        x_centered = x - self.decoder.bias
-        gate_logits = F.linear(x_centered, self.dict_elements.t())
+        x_normalized = self.encoder_layer_norm(x - self.decoder.bias)
+        gate_logits = F.linear(x_normalized, self.dict_elements.t())
         z = self.hard_concrete(gate_logits)
 
-        magnitude = self.magnitude_activation(self.magnitude_encoder(x_centered))
+        magnitude = self.magnitude_activation(self.magnitude_encoder(x_normalized))
         c = z * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=gate_logits)
@@ -149,7 +150,7 @@ class HardConcreteSAE(BaseSAE):
         # kl_loss = kl_to_target(expected_open_prob, 0.005)
         expected_K = (expected_open_prob * self.n_dict_components).mean()
 
-        sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.3)
+        sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.1)
         # sparsity_loss = 1 * revkl_loss + 0.1 * lifetime_loss
         mse_loss = F.mse_loss(output.output, output.input)
         loss = sparsity_coeff * l0_loss + self.mse_coeff * mse_loss
