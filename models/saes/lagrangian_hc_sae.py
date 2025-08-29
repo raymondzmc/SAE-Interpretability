@@ -153,8 +153,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
         x_centered = self.encoder_layer_norm(x - self.decoder_bias)
-        gate_logits = self.gate_encoder(x_centered)
-        magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
+        gate_logits = F.linear(x_centered, self.dict_elements.t())
+        magnitude = self.magnitude_activation(self.r_mag.exp() * gate_logits + self.mag_bias)
         if self.training:
             z = self.hard_concrete(gate_logits)
         else:
