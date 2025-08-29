@@ -10,12 +10,12 @@ tlens_model_path: null
 
 # Training Configuration
 save_every_n_samples: null
-eval_every_n_samples: 40_000
+eval_every_n_samples: 5_000
 gradient_accumulation_steps: 1
 lr: 1e-3
 lr_schedule: cosine
 min_lr_factor: 0.1
-warmup_samples: 5_000
+warmup_samples: 1_000
 max_grad_norm: 1.0
 log_every_n_grad_steps: 20
 
@@ -43,12 +43,11 @@ saes:
   retrain_saes: false
   sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]
   init_decoder_orthogonal: true
-  sparsity_coeff: null
+  tied_encoder_init: true
+  beta_annealing: true
   initial_beta: 2.0
   final_beta: 0.3
-  beta_annealing: true
   hard_concrete_stretch_limits: [-0.1, 1.1]
-  tied_encoder_init: true
   magnitude_activation: "softplus"
   rho: 0.005
   initial_alpha: 0.0

@@ -297,7 +297,6 @@ def train(
                 if config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
                     for sae_name, sae_output in output.sae_outputs.items():
                         log_info[f"{sae_name}/alpha"]     = sae_output.alpha.mean().item()
-                        log_info[f"{sae_name}/alpha_std"] = sae_output.alpha.std().item()
                         log_info[f"{sae_name}/rho_hat"]   = last_rho_hats[sae_name]
 
                 if is_eval_step and eval_loader is not None:
