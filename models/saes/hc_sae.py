@@ -108,7 +108,7 @@ class HardConcreteSAE(BaseSAE):
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
 
         with torch.no_grad():
-            self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
+            self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
 
     def hard_concrete(self, logits: torch.Tensor) -> torch.Tensor:
         """
