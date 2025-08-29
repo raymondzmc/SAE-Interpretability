@@ -172,6 +172,7 @@ def train(
     total_samples_at_last_eval = 0
     total_tokens = 0
     grad_updates = 0
+    progress_ratio = 0.0
     grad_norm: float | None = None
     samples_since_act_frequency_collection: int = 0
     acc_open_sum = defaultdict(lambda: None)
@@ -193,7 +194,6 @@ def train(
         n_tokens = tokens.shape[0] * tokens.shape[1]
         total_tokens += n_tokens
         samples_since_act_frequency_collection += tokens.shape[0]
-        progress_ratio = 0.0
 
         is_last_batch: bool = (batch_idx == len(train_loader) - 1)
         is_grad_step: bool = (batch_idx + 1) % config.gradient_accumulation_steps == 0
