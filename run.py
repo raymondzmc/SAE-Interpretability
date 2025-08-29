@@ -257,7 +257,7 @@ def train(
                             sae: LagrangianHardConcreteSAE = module
                             key = sae_name.replace("-", ".")
                             if acc_token_cnt[key] > 0:
-                                rho_hat = acc_open_sum[key] / acc_token_cnt[key]
+                                rho_hat = (acc_open_sum[key] / acc_token_cnt[key]).mean()
                                 if grad_updates >= warmup_steps:
                                     sae.dual_ascent_update_alpha(rho_hat)
                                 else:
