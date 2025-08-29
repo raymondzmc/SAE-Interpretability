@@ -202,6 +202,16 @@ class LagrangianHardConcreteSAE(BaseSAE):
         lag = (self.alpha.detach() * g.clamp_min(0.0))
         mse = F.mse_loss(output.output, output.input)
         loss = self.mse_coeff*mse + lag + 0.02*lb_kl - 0.02*H_token
+        return SAELoss(
+            loss=loss,
+            loss_dict={
+                "mse_loss": mse.detach().clone(),
+                "sparsity_loss": lag.detach().clone(),
+                # "lb_kl": lb_kl.detach().clone(),
+                "H_token": H_token.detach().clone(),
+                "expected_K": rho_hat.detach().clone(),
+            },
+        )
 
 
         # # Lagrangian dual-ascent controller (Lagrangian multiplier)
@@ -214,14 +224,14 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
         # # Total loss
         # loss = sparsity_loss + self.mse_coeff * mse_loss
-        return SAELoss(
-            loss=loss,
-            loss_dict={
-                "mse_loss": mse_loss.detach().clone(),
-                "sparsity_loss": sparsity_loss.detach().clone(),
-                "expected_K": expected_K.detach().clone(),
-            },
-        )
+        # return SAELoss(
+        #     loss=loss,
+        #     loss_dict={
+        #         "mse_loss": mse_loss.detach().clone(),
+        #         "sparsity_loss": sparsity_loss.detach().clone(),
+        #         "expected_K": expected_K.detach().clone(),
+        #     },
+        # )
     
     @torch.no_grad()
     def dual_ascent_update_alpha(self, rho_hat: torch.Tensor, inequality: bool = False) -> None:
