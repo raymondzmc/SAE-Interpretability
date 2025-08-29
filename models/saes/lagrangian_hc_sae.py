@@ -103,6 +103,13 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
         if tied_encoder_init:
             self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
+        
+        if self.gate_encoder.bias is not None:
+            self.gate_encoder.bias.data.fill_(math.log(self.rho / (1 - self.rho)))
+        
+        self.inference_mode = "topk"
+        self.inference_topk = int(round(self.rho * self.n_dict_components))
+        self.score_use_magnitude = True
     
     def hard_concrete(self, logits: torch.Tensor) -> torch.Tensor:
         """
@@ -122,11 +129,36 @@ class LagrangianHardConcreteSAE(BaseSAE):
             z = s.clamp(min=0.0, max=1.0)
         return z
 
+    @torch.no_grad()
+    def _deterministic_gate(self, gate_logits: torch.Tensor, magnitude: torch.Tensor) -> torch.Tensor:
+        """Return z_det in {0,1} using the chosen inference policy."""
+        q = torch.sigmoid(gate_logits - self.beta.item() * math.log(-self.l / self.r))
+        if self.inference_mode == "topk":
+            score = q * magnitude.abs() if self.score_use_magnitude else q
+            # topk per token
+            idx = score.topk(k=self.inference_topk, dim=-1, largest=True).indices  # [B,T,K]
+            z_det = torch.zeros_like(q)
+            z_det.scatter_(-1, idx, 1.0)
+            return z_det
+        elif self.inference_mode == "q_threshold":
+            tau = self.inference_q_threshold
+            if tau is None:
+                # You can set a default (e.g., 0.5) or calibrate offline to match ρ·D
+                tau = 0.5
+            return (q >= tau).to(q.dtype)
+        else:  # "coeff_threshold"
+            tau_c = self.inference_coeff_threshold
+            score = q * magnitude.abs() if self.score_use_magnitude else magnitude.abs()
+            return (score >= tau_c).to(q.dtype)
+
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
         x_centered = self.encoder_layer_norm(x - self.decoder_bias)
         gate_logits = self.gate_encoder(x_centered)
         magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
-        z = self.hard_concrete(gate_logits)
+        if self.training:
+            z = self.hard_concrete(gate_logits)
+        else:
+            z = self._deterministic_gate(gate_logits, magnitude)
         # if not self.training:
             # z = torch.where(z >= self.coefficient_threshold, z, 0.0)
         coefficients = z * magnitude
@@ -153,7 +185,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         # Lagrangian dual-ascent controller (Lagrangian multiplier)
         c = output.p_open.mean() - self.rho
         expected_K = output.p_open.sum(dim=-1).mean()
-        sparsity_loss = self.alpha.detach() * c + (0.5 * c**2)
+        sparsity_loss = self.alpha.detach() * c.clamp_min(0.0) + (0.05 * c**2)
 
         # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
