@@ -44,7 +44,7 @@ saes:
   sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]
   init_decoder_orthogonal: true
   sparsity_coeff: 0.1
-  beta_annealing: false
+  beta_annealing: true
   initial_beta: 1.0
   final_beta: 1.0
   hard_concrete_stretch_limits: [-0.1, 1.1]

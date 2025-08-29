@@ -156,6 +156,7 @@ class HardConcreteSAE(BaseSAE):
         loss_dict = {
             "mse_loss": mse_loss.detach().clone(),
             "sparsity_loss": l0_loss.detach().clone(),
+            "sparsity_coeff": sparsity_coeff.detach().clone(),
             # "revkl_loss": revkl_loss.detach().clone(),
             # "lifetime_loss": lifetime_loss.detach().clone(),
             "expected_K": expected_K.detach().clone(),
