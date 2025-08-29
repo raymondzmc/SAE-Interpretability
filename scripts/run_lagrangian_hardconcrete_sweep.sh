@@ -8,4 +8,4 @@ CUDA_VISIBLE_DEVICES=0 python run_experiments.py \
 
 CUDA_VISIBLE_DEVICES=0 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-lagrangian-hardconcrete \
---filter_runs_by_name hardconcrete_lagrangian
+--filter_runs_by_name lagrangean_hard_concrete_sparsity_coeff_5e-03_initial_beta_3.0_final_beta_0.3

@@ -114,12 +114,13 @@ class LagrangianHardConcreteSAE(BaseSAE):
         if self.training:
             u = torch.rand_like(logits)
             s = torch.sigmoid((torch.log(u + epsilon) - torch.log(1.0 - u + epsilon) + logits) / self.beta)
+            s_stretched = s * (self.r - self.l) + self.l
+            z_hard = s_stretched.clamp(min=0.0, max=1.0)
+            z = z_hard + (s_stretched - z_hard.detach())
         else:
             s = torch.sigmoid(logits / self.beta)
-        
-        s_stretched = s * (self.r - self.l) + self.l
-        z_hard = torch.clamp(s_stretched, min=0.0, max=1.0)
-        z = z_hard + (s_stretched - z_hard).detach()  
+            s_stretched = s * (self.r - self.l) + self.l
+            z = s.clamp(min=0.0, max=1.0)
         return z
 
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
@@ -128,7 +129,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
         z = self.hard_concrete(gate_logits)
         if not self.training:
-            z = torch.where(torch.abs(z) >= self.coefficient_threshold, z, 0.0)
+            z = torch.where(z >= 1e-6, z, 0.0)
         coefficients = z * magnitude
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder_bias)
         p_open = torch.sigmoid(gate_logits - self.beta * math.log(-self.l / self.r))
@@ -179,7 +180,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         delta = rho_hat - self.rho
         self.alpha.add_(self.alpha_lr * delta)
         if inequality:
-            self.alpha.clamp_(min=0.0)        # KKT: alpha >= 0 for <= constraints
+            self.alpha.clamp_(min=-5.0, max=5.0)
 
     @property
     def dict_elements(self):
