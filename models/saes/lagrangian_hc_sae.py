@@ -199,8 +199,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
         # lb_kl = (p_feat * (p_feat.clamp_min(1e-8).log() - math.log(1.0 / D))).sum()
 
         # 3) your K controller (lower-bound or band) on the *expected* K
-        K_per_pos = q.sum(dim=-1)                             # [B,T]
-        rho_hat = q
+        K_per_pos = (q.sum(dim=-1)/D).mean()                           # [B,T]
+        rho_hat = q.sum(dim=-1).mean() / D
         g = self.rho - rho_hat                                 # >0 if too sparse
         lag = (self.alpha.detach() * g) + (0.05 * g**2)
         mse = F.mse_loss(output.output, output.input)
