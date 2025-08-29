@@ -94,7 +94,7 @@ class HardConcreteSAE(BaseSAE):
         self.input_size = input_size
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
-        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
 
@@ -129,10 +129,9 @@ class HardConcreteSAE(BaseSAE):
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
         x_normalized = self.encoder_layer_norm(x - self.decoder.bias)
-        gate_logits = F.linear(x_normalized, self.dict_elements.t())
+        gate_logits = self.gate_encoder(x_normalized)
         z = self.hard_concrete(gate_logits)
-
-        magnitude = self.magnitude_activation(self.magnitude_encoder(x_normalized))
+        magnitude = self.magnitude_activation(F.linear(x_normalized, self.dict_elements.t()))
         c = z * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=gate_logits)
