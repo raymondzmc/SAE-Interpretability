@@ -87,7 +87,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.coefficient_threshold = coefficient_threshold
 
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
-        # self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
         self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
         self.mag_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
@@ -103,11 +103,11 @@ class LagrangianHardConcreteSAE(BaseSAE):
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
 
-        # if tied_encoder_init:
-        #     self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
+        if tied_encoder_init:
+            self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
         
-        # if self.gate_encoder.bias is not None:
-        #     self.gate_encoder.bias.data.fill_(math.log(self.rho / (1 - self.rho)))
+        if self.gate_encoder.bias is not None:
+            self.gate_encoder.bias.data.fill_(math.log(self.rho / (1 - self.rho)))
         
         self.inference_mode = "topk"
         self.inference_topk = int(round(self.rho * self.n_dict_components))
@@ -155,8 +155,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
         x_centered = self.encoder_layer_norm(x - self.decoder_bias)
-        gate_logits = F.linear(x_centered, self.dict_elements.t())
-        magnitude = self.magnitude_activation(self.r_mag.exp() * gate_logits + self.mag_bias)
+        gate_logits = self.gate_encoder(x_centered)
+        magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
         if self.training:
             z = self.hard_concrete(gate_logits)
         else:
