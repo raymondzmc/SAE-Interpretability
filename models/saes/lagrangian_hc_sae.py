@@ -190,28 +190,28 @@ class LagrangianHardConcreteSAE(BaseSAE):
         B, T, D = q.shape
 
         # 1) per-token entropy bonus
-        p_bt = q / (q.sum(dim=-1, keepdim=True) + 1e-8)     # normalized per token
-        H_token = -(p_bt.clamp_min(1e-8) * p_bt.clamp_min(1e-8).log()).sum(dim=-1).mean()
+        # p_bt = q / (q.sum(dim=-1, keepdim=True) + 1e-8)     # normalized per token
+        # H_token = -(p_bt.clamp_min(1e-8) * p_bt.clamp_min(1e-8).log()).sum(dim=-1).mean()
 
         # 2) batch load-balance (MoE style)
-        usage = q.sum(dim=(0,1))                              # [D]
-        p_feat = usage / (usage.sum() + 1e-8)
-        lb_kl = (p_feat * (p_feat.clamp_min(1e-8).log() - math.log(1.0 / D))).sum()
+        # usage = q.sum(dim=(0,1))                              # [D]
+        # p_feat = usage / (usage.sum() + 1e-8)
+        # lb_kl = (p_feat * (p_feat.clamp_min(1e-8).log() - math.log(1.0 / D))).sum()
 
         # 3) your K controller (lower-bound or band) on the *expected* K
-        K_per_pos = q.sum(dim=-1)                              # [B,T]
-        rho_hat = (K_per_pos / D).mean()
+        K_per_pos = q.sum(dim=-1)                             # [B,T]
+        rho_hat = q
         g = self.rho - rho_hat                                 # >0 if too sparse
-        lag = (self.alpha.detach() * g)
+        lag = (self.alpha.detach() * g) + (0.05 * g**2)
         mse = F.mse_loss(output.output, output.input)
-        loss = self.mse_coeff * mse + lag + 0.02*lb_kl - 0.02*H_token
+        loss = self.mse_coeff * mse + lag
         return SAELoss(
             loss=loss,
             loss_dict={
                 "mse_loss": mse.detach().clone(),
                 "sparsity_loss": lag.detach().clone(),
                 # "lb_kl": lb_kl.detach().clone(),
-                "H_token": H_token.detach().clone(),
+                # "H_token": H_token.detach().clone(),
                 "expected_K": rho_hat.detach().clone(),
             },
         )
