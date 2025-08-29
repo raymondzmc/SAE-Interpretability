@@ -136,22 +136,29 @@ class HardConcreteSAE(BaseSAE):
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
         expected_open_prob = torch.sigmoid(output.gate_logits - self.beta * math.log(-self.l / self.r))
+        rho = 0.005   # hardcoded for now
+        bce_elem = F.binary_cross_entropy(expected_open_prob, torch.full_like(expected_open_prob, rho), reduction="none")
+        revkl_loss = bce_elem.sum(dim=-1).mean()
+
+        q_bar = expected_open_prob.mean(dim=(0,1))                        # (D,)
+        lifetime_loss = F.binary_cross_entropy(q_bar, torch.full_like(q_bar, rho))
         # l0_loss = expected_open_prob.mean()
         # l1_loss = (output.z * output.magnitude.abs()).mean()
-        kl_loss = kl_to_target(expected_open_prob, 0.005)
+        # kl_loss = kl_to_target(expected_open_prob, 0.005)
         expected_K = (expected_open_prob * self.n_dict_components).mean()
 
-        sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.3)
-        sparsity_loss = 1 * kl_loss
+        # sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.3)
+        sparsity_loss = 1 * revkl_loss + 0.1 * lifetime_loss
         mse_loss = F.mse_loss(output.output, output.input)
-        loss = sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
+        loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         loss_dict = {
             "mse_loss": mse_loss.detach().clone(),
             "sparsity_loss": sparsity_loss.detach().clone(),
             # "training_progress": self.train_progress.detach().clone(),
             # "l0_loss": l0_loss.detach().clone(),
             # "l1_loss": l1_loss.detach().clone(),
-            "kl_loss": kl_loss.detach().clone(),
+            "revkl_loss": revkl_loss.detach().clone(),
+            "lifetime_loss": lifetime_loss.detach().clone(),
             "expected_K": expected_K.detach().clone(),
         }
         return SAELoss(loss=loss, loss_dict=loss_dict)
