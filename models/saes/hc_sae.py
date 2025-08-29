@@ -46,7 +46,7 @@ def kl_to_target(
     KL(q || rho) for Bernoulli gates, elementwise over p_open, reduced to a scalar.
 
     Args:
-        p_open: Tensor of open probabilities q \in [0,1], any shape.
+        p_open: Tensor of open probabilities q in [0,1], any shape.
                 (For Hard-Concrete, use the expected-open surrogate; see helper below.)
         rho:    Target open probability in (0,1), typically K / n_dict.
         reduction: "mean" | "sum" | "none".
