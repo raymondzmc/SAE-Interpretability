@@ -86,7 +86,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.alpha_lr = alpha_lr
         self.coefficient_threshold = coefficient_threshold
 
-        self.encoder_layer_norm = torch.nn.LayerNorm(input_size)
+        self.encoder_layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
         self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
@@ -129,7 +129,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
         z = self.hard_concrete(gate_logits)
         if not self.training:
-            z = torch.where(z >= 1e-6, z, 0.0)
+            z = torch.where(z >= self.coefficient_threshold, z, 0.0)
         coefficients = z * magnitude
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder_bias)
         p_open = torch.sigmoid(gate_logits - self.beta * math.log(-self.l / self.r))
@@ -180,7 +180,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         delta = rho_hat - self.rho
         self.alpha.add_(self.alpha_lr * delta)
         if inequality:
-            self.alpha.clamp_(min=-5.0, max=5.0)
+            self.alpha.clamp_(min=0.0)
 
     @property
     def dict_elements(self):
