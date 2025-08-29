@@ -153,7 +153,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         # Lagrangian dual-ascent controller (Lagrangian multiplier)
         c = output.p_open.mean() - self.rho
         expected_K = output.p_open.sum(dim=-1).mean()
-        sparsity_loss = self.alpha.detach() * c
+        sparsity_loss = self.alpha.detach() * c + (0.5 * c**2)
 
         # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
