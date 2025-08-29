@@ -102,7 +102,6 @@ class SAETransformer(torch.nn.Module):
                     tied_encoder_init=sae_config.tied_encoder_init,
                     magnitude_activation=sae_config.magnitude_activation,
                     coefficient_threshold=sae_config.coefficient_threshold,
-                    mu=sae_config.mu,
                 ).to(device)
             elif isinstance(sae_config, GatedSAEConfig):
                 self.saes[self.all_sae_positions[i]] = GatedSAE(

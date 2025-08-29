@@ -43,14 +43,13 @@ saes:
   retrain_saes: false
   sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]
   init_decoder_orthogonal: true
-  sparsity_coeff: 0.1
-  initial_beta: 1.0
-  final_beta: 1.0
+  sparsity_coeff: null
+  initial_beta: 2.0
+  final_beta: 0.3
   beta_annealing: true
   hard_concrete_stretch_limits: [-0.1, 1.1]
   tied_encoder_init: true
-  magnitude_activation: "relu"
-  rho: 0.05
+  magnitude_activation: "softplus"
+  rho: 0.005
   initial_alpha: 0.0
   alpha_lr: 1e-2
-  mu: 1.0

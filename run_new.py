@@ -7,8 +7,10 @@ Usage:
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+import math
 import torch
 import wandb
+from typing import Union
 from jaxtyping import Int
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -19,11 +21,11 @@ from data import create_dataloaders
 from models import (
     SAETransformer,
     SAETransformerOutput,
-    HardConcreteSAEConfig,
+    GumbelTopKSAE,
     HardConcreteSAE,
+    HardConcreteSAEConfig,
     LagrangianHardConcreteSAE,
     LagrangianHardConcreteSAEConfig,
-    GumbelTopKSAE,
 )
 from models.loader import load_tlens_model, load_pretrained_saes
 from utils.enums import SAEType
@@ -86,11 +88,8 @@ def evaluate(
         )
         
         for k, v in batch_metrics.items():
-            if k.startswith("eval/loss/"):
-                # Loss is already per-token averaged, so just weight by batch size
-                accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * tokens.shape[0]
-            else:
-                accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * n_tokens
+            # All metrics including losses should be accumulated by total tokens
+            accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * n_tokens
 
     # Get the mean for all metrics
     for key in accumulated_metrics:
@@ -142,14 +141,12 @@ def train(
             min_lr_factor=config.min_lr_factor,
         )
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_schedule)
-
+    
     # Prepare beta annealing schedule for Hard Concrete SAEs
     beta_schedule = None
     if config.saes.sae_type in [SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE] and config.saes.beta_annealing:
         total_steps = config.data.n_train_samples // config.effective_batch_size
-        hc_config = config.saes if isinstance(config.saes, (HardConcreteSAEConfig, LagrangianHardConcreteSAEConfig)) else None
-        if hc_config is None:
-            raise ValueError("Expected HardConcreteSAEConfig or LagrangianHardConcreteSAEConfig for Hard Concrete SAE type")
+        hc_config: Union[HardConcreteSAEConfig, LagrangianHardConcreteSAEConfig] = config.saes
         beta_schedule = get_exponential_beta_schedule(
             initial_beta=hc_config.initial_beta,
             final_beta=hc_config.final_beta,
@@ -172,6 +169,7 @@ def train(
     total_samples_at_last_eval = 0
     total_tokens = 0
     grad_updates = 0
+    progress_ratio = 0.0
     grad_norm: float | None = None
     samples_since_act_frequency_collection: int = 0
     acc_open_sum = defaultdict(lambda: None)
@@ -179,8 +177,6 @@ def train(
     last_rho_hats: dict[str, float] = defaultdict(float)
 
     for batch_idx, batch in tqdm(enumerate(train_loader), total=len(train_loader), desc="Steps"):
-        tokens: Int[Tensor, "batch pos"] = batch[config.data.column_name].to(device=device)
-
         # Update beta in Hard Concrete SAE modules based on schedule
         current_beta = None
         if config.saes.sae_type in [SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE] and beta_schedule is not None:
@@ -190,6 +186,7 @@ def train(
                     beta_tensor = torch.tensor(current_beta, device=sae_module.beta.device, dtype=sae_module.beta.dtype)
                     sae_module.beta.copy_(beta_tensor)
 
+        tokens: Int[Tensor, "batch pos"] = batch[config.data.column_name].to(device=device)
         total_samples += tokens.shape[0]
         n_tokens = tokens.shape[0] * tokens.shape[1]
         total_tokens += n_tokens
@@ -247,6 +244,11 @@ def train(
             grad_updates += 1
             lr_scheduler.step()
 
+            # Update training progress for all SAE modules
+            for module in model.saes.modules():
+                if hasattr(module, 'train_progress'):
+                    module.train_progress.copy_(progress_ratio)
+
             # Re-normalize decoder columns after each optimizer step
             if config.saes.sae_type == SAEType.GUMBEL_TOPK:
                 with torch.no_grad():
@@ -254,36 +256,36 @@ def train(
                         if isinstance(module, (GumbelTopKSAE)):
                             W = module.decoder.weight
                             module.decoder.weight.copy_(torch.nn.functional.normalize(W, dim=0))
-            elif config.saes.sae_type == SAEType.LAGRANGIAN_HARD_CONCRETE:
+            elif config.saes.sae_type == SAEType.HARD_CONCRETE:
                 with torch.no_grad():
                     for sae_name, module in model.saes.named_modules():
-                        if isinstance(module, (LagrangianHardConcreteSAE)):
-                            sae: LagrangianHardConcreteSAE = module
-                            key = sae_name.replace("-", ".")
-                            if acc_token_cnt[key] > 0:
-                                rho_hat = (acc_open_sum[key] / acc_token_cnt[key]).mean()
-                                if grad_updates >= warmup_steps:
-                                    sae.dual_ascent_update_alpha(rho_hat)
-                                else:
-                                    sae.alpha.zero_()
-                                last_rho_hats[key] = rho_hat.item()
-                                acc_open_sum[key] = None
-                                acc_token_cnt[key] = 0
+                        if isinstance(module, (HardConcreteSAE)):
+                            W = module.decoder.weight
+                            module.decoder.weight.copy_(torch.nn.functional.normalize(W, dim=0))
+        
+        progress_ratio += 1.0 / len(train_loader)
 
         if is_log_step:
             tqdm.write(
                 f"Samples {total_samples} Batch_idx {batch_idx} GradUpdates {grad_updates} "
                 f"Loss {loss.item():.5f}"
             )
+
             if config.wandb_project:
                 log_info = {
                     "loss": loss.item(),
                     "grad_updates": grad_updates,
                     "total_tokens": total_tokens,
                     "lr": optimizer.param_groups[0]["lr"],
+                    "progress_ratio": progress_ratio,
                 }
-                if current_beta is not None:
-                    log_info["beta"] = current_beta
+                if config.saes.sae_type == SAEType.HARD_CONCRETE:
+                    betas = []
+                    for sae_name, sae_module in model.saes.named_modules():
+                        if isinstance(sae_module, (HardConcreteSAE)):
+                            betas.append(sae_module.beta.mean().item())
+                    assert all(beta == betas[0] for beta in betas), "All betas should be the same"
+                    log_info["beta"] = betas[0]
 
                 if grad_norm is not None:
                     log_info["grad_norm"] = grad_norm  # Norm of grad before clipping
@@ -299,6 +301,7 @@ def train(
                         log_info[f"{sae_name}/alpha"]     = sae_output.alpha.mean().item()
                         log_info[f"{sae_name}/alpha_std"] = sae_output.alpha.std().item()
                         log_info[f"{sae_name}/rho_hat"]   = last_rho_hats[sae_name]
+                
 
                 if is_eval_step and eval_loader is not None:
                     eval_metrics = evaluate(

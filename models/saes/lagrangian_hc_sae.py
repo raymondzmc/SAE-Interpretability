@@ -7,10 +7,15 @@ from models.saes.base import SAEConfig, SAEOutput, SAELoss, BaseSAE
 from utils.enums import SAEType
 
 
+def softplus0(x: torch.Tensor) -> torch.Tensor:
+    return F.softplus(x) - F.softplus(torch.zeros((), device=x.device, dtype=x.dtype))
+
+
 ACTIVATION_MAP: dict[str, Callable] = {
     'relu': F.relu,
     'softplus': F.softplus,
-    'none': None,
+    'softplus0': softplus0,
+    'none': lambda x: x,
 }
 
 
@@ -21,12 +26,11 @@ class LagrangianHardConcreteSAEConfig(SAEConfig):
     beta_annealing: bool = Field(False, description="Whether to anneal beta during training")
     hard_concrete_stretch_limits: tuple[float, float] = Field((-0.1, 1.1), description="Hard concrete stretch limits")
     tied_encoder_init: bool = Field(True, description="Whether to tie the encoder weights to the decoder weights")
-    magnitude_activation: str | None = Field("relu", description="Activation function for magnitude ('relu', 'softplus', 'gelu', etc.) or None")
-    coefficient_threshold: float = Field(0.0, description="Threshold for the coefficients during inference")
-    initial_alpha: float = Field(1.0, description="Initial alpha for Lagrangian dual-ascent controller")
+    magnitude_activation: str | None = Field("softplus", description="Activation function for magnitude ('relu', 'softplus', 'gelu', etc.) or None")
+    coefficient_threshold: float = Field(1e-3, description="Threshold for the coefficients during inference")
+    initial_alpha: float = Field(0.0, description="Initial alpha for Lagrangian dual-ascent controller")
     alpha_lr: float = Field(1e-2, description="Learning rate for alpha")
-    rho: float = Field(0.05, description="Target sparsity level for Lagrangian dual-ascent controller")
-    mu: float = Field(1.0, description="Regularization parameter for the sparsity loss")
+    rho: float = Field(0.005, description="Target sparsity level for Lagrangian dual-ascent controller")
     
     @model_validator(mode="before")
     @classmethod
@@ -40,57 +44,10 @@ class LagrangianHardConcreteSAEConfig(SAEConfig):
 class LagrangianHardConcreteSAEOutput(SAEOutput):
     """HardConcrete SAE output that extends SAEOutput with additional parameters."""
     z: torch.Tensor
-    beta: float
-    l: float
-    r: float
     magnitude: torch.Tensor
     gate_logits: torch.Tensor
     p_open: torch.Tensor
     alpha: torch.Tensor
-
-
-def hard_concrete(
-    logits: torch.Tensor,
-    beta: float,
-    l: float,
-    r: float,
-    training: bool = True,
-    epsilon: float = 1e-6
-) -> torch.Tensor:
-    """
-    Sample from the Hard Concrete distribution using the reparameterization trick.
-    Used for L0 regularization as described in https://arxiv.org/abs/1712.01312.
-
-    Produces samples in [0, 1] via a stretched, hard-thresholded sigmoid transformation
-    of a log-uniform variable.
-
-    Args:
-        logits: Logits parameter (alpha) for the distribution. Shape: (*, num_features)
-        beta: Temperature parameter. Controls the sharpness of the distribution.
-        l: Lower bound of the stretch interval.
-        r: Upper bound of the stretch interval.
-        training: Whether in training mode (stochastic) or eval mode (deterministic).
-        epsilon: Small constant for numerical stability.
-
-    Returns:
-        z: Sampled values (hard-thresholded in [0, 1]). Shape: (*, num_features)
-    """
-    if training:
-        # Sample u ~ Uniform(0, 1)
-        u = torch.rand_like(logits)
-        # Transform to Concrete variable s ~ Concrete(logits, beta) = Sigmoid((log(u) - log(1-u) + logits) / beta)
-        s = torch.sigmoid((torch.log(u + epsilon) - torch.log(1.0 - u + epsilon) + logits) / beta)
-        # Stretch s to (l, r)
-        s_stretched = s * (r - l) + l
-        # Apply hard threshold (clamp to [0, 1]) -> z ~ HardConcrete(logits, beta)
-        z = torch.clamp(s_stretched, min=0.0, max=1.0)
-    else:
-        # Evaluation mode: use deterministic output
-        s = torch.sigmoid(logits / beta)
-        s_stretched = s * (r - l) + l
-        z = torch.clamp(s_stretched, min=0.0, max=1.0)
-
-    return z
 
 
 class LagrangianHardConcreteSAE(BaseSAE):
@@ -111,33 +68,16 @@ class LagrangianHardConcreteSAE(BaseSAE):
         input_size: int,
         n_dict_components: int,
         initial_beta: float, # Initial temperature for Hard Concrete
-        initial_alpha: float = 1.0,
+        initial_alpha: float = 0.0, # Initial alpha for Lagrangian dual-ascent controller
         alpha_lr: float = 1e-2,
         mse_coeff: float | None = None,
         rho: float = 0.05,
-        mu: float = 1.0,
         stretch_limits: tuple[float, float] = (-0.1, 1.1), # Stretch limits for Hard Concrete
         init_decoder_orthogonal: bool = True,
         tied_encoder_init: bool = True,
         magnitude_activation: str | None = None,
-        coefficient_threshold: float = 0.0,
+        coefficient_threshold: float = 1e-3,
     ):
-        """Initialize the SAE with Hard Concrete gates.
-
-        Args:
-            input_size: Dimensionality of input data
-            n_dict_components: Number of dictionary components (and Hard Concrete gates)
-            initial_beta: Initial temperature for the Hard Concrete distribution. This will be annealed during training.
-            initial_alpha: Initial alpha for Lagrangian dual-ascent controller
-            alpha_lr: Learning rate for alpha
-            mse_coeff: Coefficient for MSE loss term
-            rho: Target sparsity level for Lagrangian controller
-            stretch_limits: Stretch limits (l, r) for Hard Concrete. Must have l < 0 and r > 1.
-            init_decoder_orthogonal: Initialize the decoder weights to be orthonormal
-            tied_encoder_init: Tie the encoder weights to the decoder weights
-            magnitude_activation: Activation function name ('relu', 'softplus', 'gelu', etc.) or None for no activation
-            coefficient_threshold: Threshold for the coefficients during inference
-        """
         super().__init__()
         self.n_dict_components = n_dict_components
         self.input_size = input_size
@@ -147,8 +87,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.coefficient_threshold = coefficient_threshold
 
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size)
-        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
-        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
+        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
@@ -156,81 +95,48 @@ class LagrangianHardConcreteSAE(BaseSAE):
         
         self.l, self.r = stretch_limits
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
-        self.register_buffer("log_neg_l_over_r", torch.tensor(math.log(-self.l / self.r), dtype=torch.float32, device='cpu'))
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
-        self.register_buffer("alpha", torch.full((n_dict_components,), initial_alpha, dtype=torch.float32, device='cpu'))
-        self.register_buffer("mu", torch.tensor(mu, dtype=torch.float32, device='cpu'))
+        self.register_buffer("alpha", torch.tensor(initial_alpha, dtype=torch.float32, device='cpu'))
         torch.nn.init.normal_(self.gate_encoder.weight, mean=0.0, std=0.02)
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
 
         if tied_encoder_init:
-            self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
+            self.gate_encoder.weight.data.copy_(self.decoder.weight.data.T)
+    
+    def hard_concrete(self, logits: torch.Tensor) -> torch.Tensor:
+        """
+        Sample from the Hard Concrete distribution using the reparameterization trick.
+        Used for L0 regularization as described in https://arxiv.org/abs/1712.01312.
+        """
+        epsilon = 1e-6
+        if self.training:
+            u = torch.rand_like(logits)
+            s = torch.sigmoid((torch.log(u + epsilon) - torch.log(1.0 - u + epsilon) + logits) / self.beta)
+        else:
+            s = torch.sigmoid(logits / self.beta)
+        
+        s_stretched = s * (self.r - self.l) + self.l
+        z_hard = torch.clamp(s_stretched, min=0.0, max=1.0)
+        z = z_hard + (s_stretched - z_hard).detach()  
+        return z
 
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
-        """
-        Forward pass through the SAE.
-        
-        Args:
-            x: Input tensor of shape (batch_size, input_size) or (batch_size, seq_len, input_size) for NLP
-        
-        For input-dependent gates:
-            - Encoder outputs logits and pre-magnitude values
-            - Gates are sampled from Hard Concrete using input-dependent logits
-            
-        For parameter-based gates (input-independent):
-            - Encoder outputs only pre-magnitude values  
-            - Gates are sampled from Hard Concrete using global learnable parameter logits
-            - Same gate values are used across all positions for NLP models
-            
-        Returns:
-            x_hat: Reconstructed input.
-            c: Final coefficients (gate * magnitude).
-            logits: The logits used for the gates (used for L0 penalty calculation).
-            beta: The beta value used for sampling.
-            l: The lower stretch limit used.
-            r: The upper stretch limit used.
-        """
-        x_centered = self.encoder_layer_norm(x - self.decoder_bias) 
-
-        # Get gate logits and magnitude from separate encoders
-        gate_logits = self.gate_encoder(x_centered)
-        gate_logits = gate_logits - gate_logits.mean(dim=-1, keepdim=True)
-        magnitude_pre = self.magnitude_encoder(x_centered)
-
-        current_beta = self.beta.item() # Get current beta value from buffer
-        logit_rho = math.log(self.rho / (1 - self.rho))
-        delta = current_beta * float(self.log_neg_l_over_r) + logit_rho
-        logits_cal = gate_logits + delta
-        z = hard_concrete(logits_cal, beta=current_beta, l=self.l, r=self.r, training=self.training) # Shape: same as magnitude
-        
-        # Apply threshold to z during evaluation
+        x_centered = self.encoder_layer_norm(x - self.decoder_bias)
+        gate_logits = F.linear(x_centered, self.dict_elements.t())
+        magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
+        z = self.hard_concrete(gate_logits)
         if not self.training:
             z = torch.where(torch.abs(z) >= self.coefficient_threshold, z, 0.0)
-
-        # Apply activation to magnitude if specified
-        if self.magnitude_activation is not None:
-            magnitude = self.magnitude_activation(magnitude_pre)
-        else:
-            magnitude = magnitude_pre
-
-        # Combine gate and magnitude for final coefficients
         coefficients = z * magnitude
-
-        # Reconstruct using the dictionary elements and final coefficients
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder_bias)
-
-        p_open = torch.sigmoid(gate_logits + logit_rho)
+        p_open = torch.sigmoid(gate_logits - self.beta * math.log(-self.l / self.r))
         return LagrangianHardConcreteSAEOutput(
             input=x,
             c=coefficients,
             output=x_hat,
-            logits=None,
             magnitude=magnitude,
-            beta=current_beta,
-            l=self.l,
-            r=self.r,
             z=z,
             gate_logits=gate_logits,
             p_open=p_open,
@@ -243,12 +149,11 @@ class LagrangianHardConcreteSAE(BaseSAE):
         Args:
             output: The output of the HardConcreteSAE.
         """
-        p = output.p_open
-        m_d = p.mean(dim=(0, 1))
 
-        # Augmented Lagrangian
-        c = m_d - self.rho
-        sparsity_loss = (self.alpha.detach() * c).mean() + 0.5 * self.mu.item() * (c ** 2).mean()
+        # Lagrangian dual-ascent controller (Lagrangian multiplier)
+        c = output.p_open.mean() - self.rho
+        expected_K = output.p_open.sum(dim=-1).mean()
+        sparsity_loss = torch.dot(self.alpha.detach(), c)
 
         # MSE loss
         mse_loss = F.mse_loss(output.output, output.input)
@@ -260,8 +165,21 @@ class LagrangianHardConcreteSAE(BaseSAE):
             loss_dict={
                 "mse_loss": mse_loss.detach().clone(),
                 "sparsity_loss": sparsity_loss.detach().clone(),
+                "expected_K": expected_K.detach().clone(),
             },
         )
+    
+    @torch.no_grad()
+    def dual_ascent_update_alpha(self, rho_hat: torch.Tensor, inequality: bool = False) -> None:
+        """
+        Dual ascent on alpha using the current (or accumulated) batch:
+            alpha <- alpha + alpha_lr * (mean_{b,t} p_open - rho)
+        Set inequality=True to enforce (mean p_open <= rho) with alpha >= 0.
+        """
+        delta = rho_hat - self.rho
+        self.alpha.add_(self.alpha_lr * delta)
+        if inequality:
+            self.alpha.clamp_(min=0.0)        # KKT: alpha >= 0 for <= constraints
 
     @property
     def dict_elements(self):
