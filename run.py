@@ -88,11 +88,8 @@ def evaluate(
         )
         
         for k, v in batch_metrics.items():
-            if k.startswith("eval/loss/"):
-                # Loss is already per-token averaged, so just weight by batch size
-                accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * tokens.shape[0]
-            else:
-                accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * n_tokens
+            # All metrics including losses should be accumulated by total tokens
+            accumulated_metrics[k] = accumulated_metrics.get(k, 0.0) + v * n_tokens
 
     # Get the mean for all metrics
     for key in accumulated_metrics:
