@@ -10,7 +10,7 @@ tlens_model_path: null
 
 # Training Configuration
 save_every_n_samples: null
-eval_every_n_samples: 1_000
+eval_every_n_samples: 5_000
 gradient_accumulation_steps: 1
 lr: 1e-3
 lr_schedule: cosine
