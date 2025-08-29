@@ -300,7 +300,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         'relu_hardconcrete': 'ReLU HC',
         'standard_lagrangian_hardconcrete': 'Standard Lagrangian HC',
         'relu_lagrangian_hardconcrete': 'ReLU Lagrangian HC',
-        'topk': 'Top-K'
+        'topk': 'Ours'
     }
     
     # Track filtered statistics

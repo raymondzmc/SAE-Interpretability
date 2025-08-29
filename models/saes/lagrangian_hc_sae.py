@@ -157,6 +157,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
         x_centered = self.encoder_layer_norm(x - self.decoder_bias)
         gate_logits = self.gate_encoder(x_centered)
+        gate_logits = gate_logits - gate_logits.mean(dim=-1, keepdim=True) 
         magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
         z = self.hard_concrete(gate_logits)
         # if self.training:
@@ -201,9 +202,9 @@ class LagrangianHardConcreteSAE(BaseSAE):
         K_per_pos = q.sum(dim=-1)                              # [B,T]
         rho_hat = (K_per_pos / D).mean()
         g = self.rho - rho_hat                                 # >0 if too sparse
-        lag = (self.alpha.detach() * g.clamp_min(0.0))
+        lag = (self.alpha.detach() * g)
         mse = F.mse_loss(output.output, output.input)
-        loss = self.mse_coeff*mse + lag + 0.02*lb_kl - 0.02*H_token
+        loss = self.mse_coeff * mse + lag + 0.02*lb_kl - 0.02*H_token
         return SAELoss(
             loss=loss,
             loss_dict={
