@@ -89,6 +89,8 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
         # self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
+        self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
+        self.mag_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
         self.decoder_bias = torch.nn.Parameter(torch.zeros(input_size))
