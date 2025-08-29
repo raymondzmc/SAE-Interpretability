@@ -139,7 +139,7 @@ class HardConcreteSAE(BaseSAE):
         # l0_loss = expected_open_prob.mean()
         l1_loss = (output.z * output.magnitude.abs()).mean()
         kl_loss = kl_to_target(expected_open_prob, 0.005)
-        expected_K = expected_open_prob * self.n_dict_components
+        expected_K = (expected_open_prob * self.n_dict_components).mean()
 
         # sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.3)
         sparsity_loss = 1 * kl_loss + 1 * l1_loss
