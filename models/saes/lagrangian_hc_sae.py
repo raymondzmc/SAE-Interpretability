@@ -123,8 +123,9 @@ class LagrangianHardConcreteSAE(BaseSAE):
             u = torch.rand_like(logits)
             s = torch.sigmoid((torch.log(u + epsilon) - torch.log(1.0 - u + epsilon) + logits) / self.beta)
             s_stretched = s * (self.r - self.l) + self.l
-            z_hard = s_stretched.clamp(min=0.0, max=1.0)
-            z = z_hard + (s_stretched - z_hard.detach())
+            z = s_stretched.clamp(min=0.0, max=1.0)
+            # z_hard = s_stretched.clamp(min=0.0, max=1.0)
+            # z = z_hard + (s_stretched - z_hard.detach())
         else:
             s = torch.sigmoid(logits / self.beta)
             s_stretched = s * (self.r - self.l) + self.l
@@ -157,10 +158,11 @@ class LagrangianHardConcreteSAE(BaseSAE):
         x_centered = self.encoder_layer_norm(x - self.decoder_bias)
         gate_logits = self.gate_encoder(x_centered)
         magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
-        if self.training:
-            z = self.hard_concrete(gate_logits)
-        else:
-            z = self._deterministic_gate(gate_logits, magnitude)
+        z = self.hard_concrete(gate_logits)
+        # if self.training:
+        #     z = self.hard_concrete(gate_logits)
+        # else:
+        #     z = self._deterministic_gate(gate_logits, magnitude)
         # if not self.training:
             # z = torch.where(z >= self.coefficient_threshold, z, 0.0)
         coefficients = z * magnitude
