@@ -87,7 +87,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
         self.coefficient_threshold = coefficient_threshold
 
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
-        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
+        self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
         self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
 
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
@@ -97,7 +97,6 @@ class LagrangianHardConcreteSAE(BaseSAE):
         assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
         self.register_buffer("alpha", torch.tensor(initial_alpha, dtype=torch.float32, device='cpu'))
-        torch.nn.init.normal_(self.gate_encoder.weight, mean=0.0, std=0.02)
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
@@ -125,11 +124,11 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
     def forward(self, x: torch.Tensor) -> LagrangianHardConcreteSAEOutput:
         x_centered = self.encoder_layer_norm(x - self.decoder_bias)
-        gate_logits = F.linear(x_centered, self.dict_elements.t())
+        gate_logits = self.gate_encoder(x_centered)
         magnitude = self.magnitude_activation(F.linear(x_centered, self.dict_elements.t()))
         z = self.hard_concrete(gate_logits)
-        if not self.training:
-            z = torch.where(z >= self.coefficient_threshold, z, 0.0)
+        # if not self.training:
+            # z = torch.where(z >= self.coefficient_threshold, z, 0.0)
         coefficients = z * magnitude
         x_hat = F.linear(coefficients, self.dict_elements, bias=self.decoder_bias)
         p_open = torch.sigmoid(gate_logits - self.beta * math.log(-self.l / self.r))
