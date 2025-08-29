@@ -144,7 +144,7 @@ class HardConcreteSAE(BaseSAE):
 
         # q_bar = expected_open_prob.mean(dim=(0,1))                        # (D,)
         # lifetime_loss = F.binary_cross_entropy(q_bar, torch.full_like(q_bar, rho))
-        l0_loss = expected_open_prob.mean()
+        l0_loss = expected_open_prob.sum(dim=-1).mean() / self.input_size
         # l1_loss = (output.z * output.magnitude.abs()).mean()
         # kl_loss = kl_to_target(expected_open_prob, 0.005)
         expected_K = (expected_open_prob * self.n_dict_components).mean()
