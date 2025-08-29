@@ -8,4 +8,4 @@ CUDA_VISIBLE_DEVICES=1 python run_experiments.py \
 
 CUDA_VISIBLE_DEVICES=1 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-hardconcrete \
---filter_runs_by_name standard_hardconcrete
+--filter_runs_by_name hard_concrete_sparsity_coeff_5e-03_initial_beta_1.0

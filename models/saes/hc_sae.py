@@ -7,9 +7,14 @@ from models.saes.base import SAEConfig, SAEOutput, SAELoss, BaseSAE
 from utils.enums import SAEType
 
 
+def softplus0(x: torch.Tensor) -> torch.Tensor:
+    return F.softplus(x) - F.softplus(torch.zeros((), device=x.device, dtype=x.dtype))
+
+
 ACTIVATION_MAP: dict[str, Callable] = {
     'relu': F.relu,
     'softplus': F.softplus,
+    'softplus0': softplus0,
     'none': torch.nn.Identity(),
 }
 
@@ -20,7 +25,7 @@ class HardConcreteSAEConfig(SAEConfig):
     initial_beta: float = Field(0.5, description="Initial beta for Hard Concrete annealing")
     final_beta: float | None = Field(None, description="Final beta for Hard Concrete annealing")
     hard_concrete_stretch_limits: tuple[float, float] = Field((-0.1, 1.1), description="Hard concrete stretch limits")
-    magnitude_activation: str | None = Field("softplus", description="Activation function for magnitude ('relu', 'softplus', etc.) or None")
+    magnitude_activation: str | None = Field("softplus0", description="Activation function for magnitude ('relu', 'softplus', etc.) or None")
 
 
 class HardConcreteSAEOutput(SAEOutput):
@@ -81,7 +86,7 @@ class HardConcreteSAE(BaseSAE):
         mse_coeff: float | None = None,
         stretch_limits: tuple[float, float] = (-0.1, 1.1), # Stretch limits for Hard Concrete
         init_decoder_orthogonal: bool = True,
-        magnitude_activation: str | None = "softplus",
+        magnitude_activation: str | None = "softplus0",
     ):
         super().__init__()
         self.n_dict_components = n_dict_components
@@ -134,6 +139,7 @@ class HardConcreteSAE(BaseSAE):
         # l0_loss = expected_open_prob.mean()
         l1_loss = (output.z * output.magnitude.abs()).mean()
         kl_loss = kl_to_target(expected_open_prob, 0.005)
+        expected_K = expected_open_prob * self.n_dict_components
 
         # sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.3)
         sparsity_loss = 1 * kl_loss + 1 * l1_loss
@@ -146,6 +152,7 @@ class HardConcreteSAE(BaseSAE):
             # "l0_loss": l0_loss.detach().clone(),
             "l1_loss": l1_loss.detach().clone(),
             "kl_loss": kl_loss.detach().clone(),
+            "expected_K": expected_K.detach().clone(),
         }
         return SAELoss(loss=loss, loss_dict=loss_dict)
 
