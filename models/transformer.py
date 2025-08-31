@@ -110,6 +110,8 @@ class SAETransformer(torch.nn.Module):
                     sparsity_coeff=sae_config.sparsity_coeff,
                     mse_coeff=sae_config.mse_coeff,
                     aux_coeff=sae_config.aux_coeff,
+                    magnitude_encoder=sae_config.magnitude_encoder,
+                    magnitude_activation=sae_config.magnitude_activation,
                 ).to(device)
             elif isinstance(sae_config, GatedHardConcreteSAEConfig):
                 self.saes[self.all_sae_positions[i]] = GatedHardConcreteSAE(
