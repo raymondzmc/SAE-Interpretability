@@ -41,7 +41,7 @@ class GatedSAE(BaseSAE):
         super().__init__()
         self.input_size = input_size
         self.n_dict_components = n_dict_components
-        self.magnitude_encoder = magnitude_encoder
+        self.magnitude_encoder_type = magnitude_encoder
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
         self.aux_coeff = aux_coeff if aux_coeff is not None else 1.0
@@ -54,9 +54,9 @@ class GatedSAE(BaseSAE):
         
         # Magnitude network parameters
         self.magnitude_activation = get_activation(magnitude_activation)
-        if self.magnitude_encoder == EncoderType.SEPARATE:
+        if self.magnitude_encoder_type == EncoderType.SEPARATE:
             self.magnitude_encoder = nn.Linear(input_size, n_dict_components, bias=True)
-        elif self.magnitude_encoder == EncoderType.SCALE:
+        elif self.magnitude_encoder_type == EncoderType.SCALE:
             self.r_mag = nn.Parameter(torch.zeros(n_dict_components))
             self.mag_bias = nn.Parameter(torch.zeros(n_dict_components))
 
@@ -94,11 +94,11 @@ class GatedSAE(BaseSAE):
         f_gate = (pi_gate > 0).float()  # Heaviside step -> {0,1}
 
         # Magnitude network: exponential scaling + bias + ReLU
-        if self.magnitude_encoder == EncoderType.SEPARATE:
+        if self.magnitude_encoder_type == EncoderType.SEPARATE:
             pi_mag = self.magnitude_encoder(x_enc)
-        elif self.magnitude_encoder == EncoderType.SCALE:
+        elif self.magnitude_encoder_type == EncoderType.SCALE:
             pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
-        elif self.magnitude_encoder == EncoderType.DECODER_TRANSPOSE:
+        elif self.magnitude_encoder_type == EncoderType.DECODER_TRANSPOSE:
             pi_mag = F.linear(x_enc, self.decoder.weight.T)
 
         f_mag = self.magnitude_activation(pi_mag)
