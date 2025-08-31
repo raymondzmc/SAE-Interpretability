@@ -1,8 +1,8 @@
 
 CUDA_VISIBLE_DEVICES=3 python run_experiments.py \
 --base_config configs/tinystories-test/tinystories-gated.yaml \
---sweep_config configs/tinystories-test/sweep/gated_sweep_3.yaml \
---output_dir experiment_outputs/gated_sweep_3
+--sweep_config configs/tinystories-test/sweep/gated_sweep3.yaml \
+--output_dir experiment_outputs/gated_sweep3
 
 CUDA_VISIBLE_DEVICES=3 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-test \
