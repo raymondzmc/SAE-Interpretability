@@ -1,7 +1,7 @@
 # Experiment Settings
-wandb_project: tinystories-1m
+wandb_project: tinystories-1m-lagrangian-hardconcrete
 wandb_run_name: null
-wandb_tags: ["topk"]
+wandb_tags: ["lagrangian-hardconcrete"]
 seed: 42
 
 # Model Configuration  
@@ -10,12 +10,12 @@ tlens_model_path: null
 
 # Training Configuration
 save_every_n_samples: null
-eval_every_n_samples: 40_000
+eval_every_n_samples: 5_000
 gradient_accumulation_steps: 1
 lr: 1e-3
 lr_schedule: cosine
 min_lr_factor: 0.1
-warmup_samples: 20_000
+warmup_samples: 1_000
 max_grad_norm: 1.0
 log_every_n_grad_steps: 20
 
@@ -24,8 +24,8 @@ data:
   dataset_name: "apollo-research/Skylion007-openwebtext-tokenizer-gpt2"
   tokenizer_name: "roneneldan/TinyStories"
   context_length: 1024
-  n_train_samples: 400_000
-  n_eval_samples: 1_000
+  n_train_samples: 100_000
+  n_eval_samples: 500
   train_batch_size: 20
   eval_batch_size: 20
   streaming: true
@@ -36,16 +36,20 @@ data:
 
 # SAE Configuration - Hard Concrete SAE with learned gates
 saes:
-  name: "topk_sae"
-  sae_type: "topk"
+  name: "lagrangian_hardconcrete_sae"
+  sae_type: "lagrangean_hard_concrete"
   dict_size_to_input_ratio: 50.0
   pretrained_sae_paths: null
   retrain_saes: false
   sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]
   init_decoder_orthogonal: true
-  sparsity_coeff: null
-  k: 32
   tied_encoder_init: true
-  use_pre_relu: true
-  aux_k: null
-  aux_coeff: null
+  beta_annealing: true
+  initial_beta: 2.0
+  final_beta: 1
+  hard_concrete_stretch_limits: [-0.1, 1.1]
+  magnitude_activation: "softplus"
+  rho: 0.005
+  initial_alpha: 0.0
+  alpha_lr: 1e-2
+  coefficient_threshold: 0.001

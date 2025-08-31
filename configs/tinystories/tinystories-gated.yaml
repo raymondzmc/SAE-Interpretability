@@ -24,8 +24,8 @@ data:
   dataset_name: "apollo-research/Skylion007-openwebtext-tokenizer-gpt2"
   tokenizer_name: "roneneldan/TinyStories"
   context_length: 1024
-  n_train_samples: 400_000
-  n_eval_samples: 500
+  n_train_samples: 100_000
+  n_eval_samples: 1_000
   train_batch_size: 20
   eval_batch_size: 20
   streaming: true
@@ -39,6 +39,8 @@ saes:
   name: "gated_sae"
   sae_type: "gated"
   dict_size_to_input_ratio: 50.0
+  magnitude_activation: "relu"
+  magnitude_encoder: 'scale'
   pretrained_sae_paths: null
   retrain_saes: false
   sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]

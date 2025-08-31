@@ -1,0 +1,4 @@
+# Sparsity coefficient sweep  
+k: [4, 8, 16, 32, 64]
+magnitude_activation: ["relu"]
+wandb_run_name: ["relu_gumbel_topk"]

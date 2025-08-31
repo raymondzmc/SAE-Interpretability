@@ -11,7 +11,15 @@ class SAEType(str, Enum):
     TOPK = "topk"
     GUMBEL_TOPK = "gumbel_topk"
     # Add more SAE types as needed
-    
+
+
+class EncoderType(str, Enum):
+    """Enum for different encoder types."""
+    SCALE = "scale"
+    SEPARATE = "separate"
+    DECODER_TRANSPOSE = "decoder_transpose"
+    NONE = "none"
+
 
 class LossType(str, Enum):
     """Enum for different loss types (for future extensibility)."""

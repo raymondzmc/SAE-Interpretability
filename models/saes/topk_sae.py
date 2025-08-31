@@ -140,7 +140,7 @@ class TopKSAE(BaseSAE):
             return z, mask
 
         # Compute Top-K per sample along last dim
-        topk_vals, topk_idx = torch.topk(z, k=self.k, dim=-1)
+        topk_idx = torch.topk(z, k=self.k, dim=-1)[1]
         mask = torch.zeros_like(z)
         mask.scatter_(-1, topk_idx, 1.0)
         code = z * mask
@@ -185,7 +185,7 @@ class TopKSAE(BaseSAE):
             latent_dim = z_inactive.size(-1)
             aux_k = min(self.aux_k, max(0, latent_dim - self.k))
             if aux_k > 0:
-                aux_vals, aux_idx = torch.topk(z_inactive, k=aux_k, dim=-1)
+                aux_idx = torch.topk(z_inactive, k=aux_k, dim=-1)[1]
                 aux_mask = torch.zeros_like(z_inactive)
                 aux_mask.scatter_(-1, aux_idx, 1.0)
                 aux_code = z * aux_mask  # use actual (ReLUed) magnitudes for those indices
@@ -199,6 +199,9 @@ class TopKSAE(BaseSAE):
                 aux_loss = F.mse_loss(x_hat_aux, output.input)
                 total_loss = total_loss + self.aux_coeff * aux_loss
                 loss_dict["aux_loss"] = aux_loss.detach().clone()
+            else:
+                # No room for auxiliary picks; report zero aux loss
+                loss_dict["aux_loss"] = torch.zeros((), device=output.input.device)
 
         return SAELoss(loss=total_loss, loss_dict=loss_dict)
 

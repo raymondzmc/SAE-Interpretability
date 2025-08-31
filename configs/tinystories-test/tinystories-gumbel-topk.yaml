@@ -1,7 +1,7 @@
 # Experiment Settings
-wandb_project: tinystories-1m
+wandb_project: tinystories-1m-gumbel-topk
 wandb_run_name: null
-wandb_tags: ["topk"]
+wandb_tags: ["gumbel-topk"]
 seed: 42
 
 # Model Configuration  
@@ -10,7 +10,7 @@ tlens_model_path: null
 
 # Training Configuration
 save_every_n_samples: null
-eval_every_n_samples: 40_000
+eval_every_n_samples: 5_000
 gradient_accumulation_steps: 1
 lr: 1e-3
 lr_schedule: cosine
@@ -25,7 +25,7 @@ data:
   tokenizer_name: "roneneldan/TinyStories"
   context_length: 1024
   n_train_samples: 400_000
-  n_eval_samples: 1_000
+  n_eval_samples: 500
   train_batch_size: 20
   eval_batch_size: 20
   streaming: true
@@ -36,16 +36,19 @@ data:
 
 # SAE Configuration - Hard Concrete SAE with learned gates
 saes:
-  name: "topk_sae"
-  sae_type: "topk"
+  name: "gumbel_topk_sae"
+  sae_type: "gumbel_topk"
   dict_size_to_input_ratio: 50.0
   pretrained_sae_paths: null
   retrain_saes: false
   sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]
   init_decoder_orthogonal: true
-  sparsity_coeff: null
-  k: 32
+  sparsity_coeff: 0.1
+  k: 4
+  gumbel_temperature: 1.0
+  magnitude_activation: "softplus"
+  init_decoder_orthogonal: true
   tied_encoder_init: true
-  use_pre_relu: true
-  aux_k: null
-  aux_coeff: null
+  decoder_bias: true
+  aux_k: 258
+  aux_coeff: 0.03

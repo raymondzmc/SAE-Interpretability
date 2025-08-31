@@ -2,21 +2,9 @@ import math
 import torch
 import torch.nn.functional as F
 from pydantic import Field
-from typing import Callable
 from models.saes.base import SAEConfig, SAEOutput, SAELoss, BaseSAE
 from utils.enums import SAEType
-
-
-def softplus0(x: torch.Tensor) -> torch.Tensor:
-    return F.softplus(x) - F.softplus(torch.zeros((), device=x.device, dtype=x.dtype))
-
-
-ACTIVATION_MAP: dict[str, Callable] = {
-    'relu': F.relu,
-    'softplus': F.softplus,
-    'softplus0': softplus0,
-    'none': torch.nn.Identity(),
-}
+from models.saes.activations import get_activation
 
 
 class HardConcreteSAEConfig(SAEConfig):

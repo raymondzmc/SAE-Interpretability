@@ -25,7 +25,7 @@ data:
   tokenizer_name: "roneneldan/TinyStories"
   context_length: 1024
   n_train_samples: 400_000
-  n_eval_samples: 500
+  n_eval_samples: 1_000
   train_batch_size: 20
   eval_batch_size: 20
   streaming: true

@@ -1,5 +1,5 @@
 # Experiment Settings
-wandb_project: tinystories-1m
+wandb_project: tinystories-1m-test
 wandb_run_name: null
 wandb_tags: ["topk"]
 seed: 42
