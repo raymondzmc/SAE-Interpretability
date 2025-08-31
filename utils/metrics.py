@@ -58,7 +58,7 @@ def get_activations_for_sae_type(sae_output, sae_type: SAEType) -> torch.Tensor:
     elif sae_type == SAEType.RELU:
         return sae_output.c
     elif sae_type == SAEType.GATED:
-        return sae_output.z
+        return sae_output.c
     elif sae_type == SAEType.TOPK:
         return sae_output.c
     elif sae_type == SAEType.GUMBEL_TOPK:
