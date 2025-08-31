@@ -95,11 +95,11 @@ class GatedSAE(BaseSAE):
 
         # Magnitude network: exponential scaling + bias + ReLU
         if self.magnitude_encoder_type == EncoderType.SEPARATE:
-            pi_mag = self.magnitude_encoder(x_enc)
+            pi_mag = self.magnitude_encoder(x)
         elif self.magnitude_encoder_type == EncoderType.SCALE:
             pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
         elif self.magnitude_encoder_type == EncoderType.DECODER_TRANSPOSE:
-            pi_mag = F.linear(x_enc, self.decoder.weight.T)
+            pi_mag = F.linear(x, self.decoder.weight.T)
 
         f_mag = self.magnitude_activation(pi_mag)
 
