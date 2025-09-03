@@ -91,6 +91,7 @@ class HardConcreteSAE(BaseSAE):
         self.threshold_mu = torch.nn.Parameter(torch.zeros(n_dict_components))
         self.threshold_log_var = torch.nn.Parameter(torch.ones(n_dict_components) * -2)
         self.register_buffer("beta", torch.tensor(1.0))
+        self.temperature = 1.0
 
     def sample_thresholds(self, training=True):
         """Sample thresholds from learned distributions with temperature scaling."""
