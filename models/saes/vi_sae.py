@@ -63,7 +63,7 @@ class VITopKSAEConfig(SAEConfig):
     """
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    sae_type: SAEType = Field(default=SAEType.VI_TOPK, description="VI Top-K SAE type")
+    sae_type: SAEType = Field(default=SAEType.TOPK, description="Kept as TOPK for compatibility")
     k: int = Field(..., description="Number of active features per sample")
     tied_encoder_init: bool = Field(True, description="Initialize encoder = decoder.T")
     use_pre_relu: bool = Field(True, description="Apply ReLU before Top-K")
@@ -91,7 +91,7 @@ class VITopKSAEConfig(SAEConfig):
     @classmethod
     def set_sae_type(cls, values: dict[str, Any]) -> dict[str, Any]:
         if isinstance(values, dict):
-            values["sae_type"] = SAEType.VI_TOPK
+            values["sae_type"] = SAEType.TOPK
         return values
 
 
@@ -140,6 +140,7 @@ class VITopKSAE(BaseSAE):
         self.n_dict_components = n_dict_components
         self.k = int(k)
         self.use_pre_relu = bool(use_pre_relu)
+        self.register_buffer("train_progress", torch.tensor(0.0, dtype=torch.float32, device='cpu'))
 
         # Loss coeffs
         self.mse_coeff = float(mse_coeff)
@@ -179,6 +180,15 @@ class VITopKSAE(BaseSAE):
         self.gate_gamma_h = nn.Parameter(torch.zeros(n_dict_components))
         self.gate_beta_h = nn.Parameter(torch.full((n_dict_components,), torch.logit(torch.tensor(self.prior_rate))))
 
+        self.rho_base = float(self.prior_rate) if prior_rate is not None else (self.k / float(n_dict_components))
+        self.rho_warm = float(min(0.1, 4.0 * self.rho_base))  # fat prior early
+        self.warmup_ratio = 0.4  # tune (5–20% of training)
+        self.register_buffer("_step", torch.tensor(0, dtype=torch.long), persistent=True)
+
+        # initialize gate_beta_h towards warm prior (helps the start)
+        with torch.no_grad():
+            self.gate_beta_h.copy_(torch.full_like(self.gate_beta_h, torch.logit(torch.tensor(self.rho_warm))))
+
     @property
     def dict_elements(self) -> torch.Tensor:
         return F.normalize(self.decoder.weight, dim=0)
@@ -190,6 +200,14 @@ class VITopKSAE(BaseSAE):
     def _gate_logits(self, r: torch.Tensor) -> torch.Tensor:
         h = self.ln(r) if self.use_ln else r
         return self.gate_gamma_h * h + self.gate_beta_h
+    
+    def _current_prior(self):
+        if self.train_progress > self.warmup_ratio:
+            return self.rho_base
+        t = min(1.0, self.train_progress.item() / self.warmup_ratio)
+        # cosine interp from rho_warm -> rho_base
+        alpha = 0.5 * (1 + torch.cos(torch.tensor(t * 3.1415926535, device=self.gate_beta_h.device)))
+        return float(self.rho_base + (self.rho_warm - self.rho_base) * alpha.item())
 
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
@@ -200,15 +218,14 @@ class VITopKSAE(BaseSAE):
         p = torch.sigmoid(eta)
 
         # Binary-Concrete sample (train) or deterministic proxy (eval)
-        # z_tilde = _sample_binary_concrete(eta, temp=self.vi_temp, training=self.training)
+        z_tilde = _sample_binary_concrete(eta, temp=self.vi_temp, training=self.training)
 
         # Selection score
         eps = 1e-8
-        # if self.training:
-        #     score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
-        # else:
-        score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
-        # score = torch.log(p + eps)
+        if self.training:
+            score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
+        else:
+            score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
 
         st_mask, hard_mask, soft_mask = _topk_st(score, self.k, tau_st=self.st_tau)
 
@@ -228,7 +245,8 @@ class VITopKSAE(BaseSAE):
 
         # KL(q(z|x) || Bernoulli(rho)) for probability calibration
         if self.kl_coeff > 0.0:
-            kl = _kl_bern_bern(output.p, self.prior_rate).mean()
+            rho_t = self._current_prior()
+            kl = _kl_bern_bern(output.p, rho_t).mean()
             total = total + self.kl_coeff * kl
             loss_dict["kl_gate"] = kl.detach().clone()
 

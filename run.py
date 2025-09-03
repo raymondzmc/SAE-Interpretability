@@ -164,7 +164,7 @@ def train(
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     save_dir = config.save_dir / f"{run_name}_{timestamp}" if config.save_dir else None
-
+    progress_ratio = 0.0
     total_samples = 0
     total_samples_at_last_save = 0
     total_samples_at_last_eval = 0
@@ -254,6 +254,11 @@ def train(
             grad_updates += 1
             lr_scheduler.step()
 
+            # Update training progress for all SAE modules
+            for module in model.saes.modules():
+                if hasattr(module, 'train_progress'):
+                    module.train_progress.copy_(progress_ratio)
+
             # Re-normalize decoder columns after each optimizer step
             if config.saes.sae_type in [SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE]:
                 with torch.no_grad():
@@ -281,6 +286,7 @@ def train(
                                 acc_open_sum[key] = None
                                 acc_token_cnt[key] = 0
 
+        progress_ratio += 1.0 / len(train_loader)
         if is_log_step:
             tqdm.write(
                 f"Samples {total_samples} Batch_idx {batch_idx} GradUpdates {grad_updates} "
