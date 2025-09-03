@@ -249,6 +249,7 @@ class VITopKSAE(BaseSAE):
             soft_card = output.soft_mask.sum(dim=-1).mean()
             card_loss = (soft_card - self._current_k()) ** 2
             total = total + self.card_coeff * card_loss
+            loss_dict["current_k"] = self._current_k()
             loss_dict["card_loss"] = card_loss.detach().clone()
 
         # Dual ascent penalty for expected-K: lambda * (sum_i p_i(x) - K)
