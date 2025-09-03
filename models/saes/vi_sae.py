@@ -208,9 +208,9 @@ class VITopKSAE(BaseSAE):
         #     score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
         # else:
         # score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
-        score = torch.log(p + eps)
+        # score = torch.log(p + eps)
 
-        st_mask, hard_mask, soft_mask = _topk_st(score, self.k, tau_st=self.st_tau)
+        st_mask, hard_mask, soft_mask = _topk_st(p, self.k, tau_st=self.st_tau)
 
         # Exact Top-K codes (do not scale magnitudes by z; gate is used for selection)
         c = r * st_mask
