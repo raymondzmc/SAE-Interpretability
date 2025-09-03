@@ -230,7 +230,7 @@ class VITopKSAE(BaseSAE):
 
         # KL(q(z|x) || Bernoulli(rho)) for probability calibration
         if self.kl_coeff > 0.0:
-            rho_t = self._current_prior()
+            rho_t = self.prior_rate
             kl = _kl_bern_bern(output.p, rho_t).mean()
             total = total + self.kl_coeff * kl
             loss_dict["rho_t"] = rho_t
