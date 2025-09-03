@@ -159,7 +159,7 @@ def loss_metrics(output: SAETransformerOutput) -> dict[str, float]:
     loss_metrics = {}
     for name, loss_output in output.loss_outputs.items():
         for loss_name, loss_value in loss_output.loss_dict.items():
-            loss_metrics[f"loss/{loss_name}/{name}"] = loss_value.item()
+            loss_metrics[f"loss/{loss_name}/{name}"] = loss_value if isinstance(loss_value, float) else loss_value.item()
     return loss_metrics
 
 
