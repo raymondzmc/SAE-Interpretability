@@ -42,7 +42,7 @@ class SAELoss(BaseModel):
     """Base class for SAE loss outputs using Pydantic BaseModel for clean inheritance."""
     model_config = ConfigDict(arbitrary_types_allowed=True)
     loss: Float[torch.Tensor, ""]
-    loss_dict: dict[str, Float[torch.Tensor, ""]]
+    loss_dict: dict[str, Float[torch.Tensor, ""] | float]
 
 
 class BaseSAE(torch.nn.Module):
