@@ -193,14 +193,6 @@ class VITopKSAE(BaseSAE):
     def _gate_logits(self, r: torch.Tensor) -> torch.Tensor:
         h = self.ln(r) if self.use_ln else r
         return self.gate_gamma_h * h + self.gate_beta_h
-    
-    def _current_k(self):
-        if self.train_progress >= self.k_warmup_ratio:
-            return self.k
-        t = min(1.0, self.train_progress.item() / self.k_warmup_ratio)
-        # cosine interp from self.n_dict_components -> self.k
-        alpha = 0.5 * (1 + torch.cos(torch.tensor(t * 3.1415926535, device=self.gate_beta_h.device)))
-        return float(self.k + (self.n_dict_components - self.k) * alpha.item())
 
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
@@ -247,15 +239,14 @@ class VITopKSAE(BaseSAE):
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)
         if self.card_coeff > 0.0:
             soft_card = output.soft_mask.sum(dim=-1).mean()
-            card_loss = (soft_card - self._current_k()) ** 2
+            card_loss = (soft_card - self.k) ** 2
             total = total + self.card_coeff * card_loss
-            loss_dict["current_k"] = self._current_k()
             loss_dict["card_loss"] = card_loss.detach().clone()
 
         # Dual ascent penalty for expected-K: lambda * (sum_i p_i(x) - K)
         if self.dual_lr > 0.0:
             exp_card = output.p.sum(dim=-1).mean()
-            lagr_term = self.lambda_dual * (exp_card - self.k)
+            lagr_term = self.lambda_dual * (exp_card - self.k) ** 2
             total = total + lagr_term
             loss_dict["lagrangian"] = lagr_term.detach().clone()
             loss_dict["exp_card"] = exp_card.detach().clone()
