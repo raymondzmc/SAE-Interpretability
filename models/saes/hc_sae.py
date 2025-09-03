@@ -83,9 +83,10 @@ class HardConcreteSAE(BaseSAE):
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
         self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
-        self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
-        self.mag_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
-        self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
+        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
+        # self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
+        # self.mag_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
+        self.magnitude_activation = get_activation(magnitude_activation)
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=True)
 
         # Register beta as a buffer to allow updates during training without being a model parameter
@@ -118,10 +119,10 @@ class HardConcreteSAE(BaseSAE):
         return z
 
     def forward(self, x: torch.Tensor) -> HardConcreteSAEOutput:
-        x_normalized = self.encoder_layer_norm(x - self.decoder.bias)
-        gate_logits = F.linear(x_normalized, self.dict_elements.t())
+        x_centered = self.encoder_layer_norm(x - self.decoder.bias)
+        gate_logits = self.gate_encoder(x_centered.detach())
         z = self.hard_concrete(gate_logits)
-        magnitude = self.magnitude_activation(self.r_mag.exp() * gate_logits + self.mag_bias)
+        magnitude = self.magnitude_activation(self.magnitude_encoder(x_centered))
         c = z * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
         return HardConcreteSAEOutput(input=x, c=c, output=x_hat, magnitude=magnitude, beta=self.beta, z=z, gate_logits=gate_logits)
