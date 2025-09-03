@@ -194,20 +194,21 @@ class VITopKSAE(BaseSAE):
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
         preacts = self.encoder(x_centered)
-        r = F.relu(preacts) if self.use_pre_relu else preacts
+        r = F.softplus(preacts) if self.use_pre_relu else preacts
 
         eta = self._gate_logits(r)
         p = torch.sigmoid(eta)
 
         # Binary-Concrete sample (train) or deterministic proxy (eval)
-        z_tilde = _sample_binary_concrete(eta, temp=self.vi_temp, training=self.training)
+        # z_tilde = _sample_binary_concrete(eta, temp=self.vi_temp, training=self.training)
 
         # Selection score
         eps = 1e-8
-        if self.training:
-            score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
-        else:
-            score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
+        # if self.training:
+        #     score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
+        # else:
+        # score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
+        score = torch.log(p + eps)
 
         st_mask, hard_mask, soft_mask = _topk_st(score, self.k, tau_st=self.st_tau)
 
