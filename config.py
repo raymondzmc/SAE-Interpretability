@@ -20,6 +20,7 @@ from models.saes import (
     TopKSAEConfig,
     LagrangianHardConcreteSAEConfig,
     GumbelTopKSAEConfig,
+    VITopKSAEConfig,
 )
 from utils.enums import SAEType
 from settings import settings
@@ -71,7 +72,7 @@ class Config(BaseModel):
     #     100_000, description="The number of tokens to caclulate activation frequency metrics over."
     # )
     data: DataConfig = Field(..., description="Data configuration with train/eval sample counts")
-    saes: Union[ReLUSAEConfig, HardConcreteSAEConfig, GatedSAEConfig, GatedHardConcreteSAEConfig, TopKSAEConfig, LagrangianHardConcreteSAEConfig, GumbelTopKSAEConfig] = Field(..., description="SAE configuration")
+    saes: Union[ReLUSAEConfig, HardConcreteSAEConfig, GatedSAEConfig, GatedHardConcreteSAEConfig, TopKSAEConfig, LagrangianHardConcreteSAEConfig, GumbelTopKSAEConfig, VITopKSAEConfig] = Field(..., description="SAE configuration")
     
     @model_validator(mode="before")
     @classmethod

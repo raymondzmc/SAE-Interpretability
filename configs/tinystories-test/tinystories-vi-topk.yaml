@@ -1,0 +1,69 @@
+# Experiment Settings
+wandb_project: tinystories-1m-test
+wandb_run_name: null
+wandb_tags: ["vi-topk"]
+seed: 42
+
+# Model Configuration  
+tlens_model_name: "roneneldan/TinyStories-1M" 
+tlens_model_path: null
+
+# Training Configuration
+save_every_n_samples: null
+eval_every_n_samples: 40_000
+gradient_accumulation_steps: 1
+lr: 1e-3
+lr_schedule: cosine
+min_lr_factor: 0.1
+warmup_samples: 20_000
+max_grad_norm: 1.0
+log_every_n_grad_steps: 20
+
+# Data Configuration
+data:
+  dataset_name: "apollo-research/Skylion007-openwebtext-tokenizer-gpt2"
+  tokenizer_name: "roneneldan/TinyStories"
+  context_length: 1024
+  n_train_samples: 400_000
+  n_eval_samples: 1_000
+  train_batch_size: 20
+  eval_batch_size: 20
+  streaming: true
+  seed: null
+  is_tokenized: true
+  column_name: "input_ids"
+  split: "train"
+
+# SAE Configuration - Variational Inference Top-K SAE
+saes:
+  name: "vi_topk_sae"
+  sae_type: "vi_topk"
+  dict_size_to_input_ratio: 50.0
+  pretrained_sae_paths: null
+  retrain_saes: false
+  sae_positions: ["blocks.2.hook_resid_pre", "blocks.4.hook_resid_pre", "blocks.6.hook_resid_pre"]
+  init_decoder_orthogonal: true
+  
+  # Top-K specific parameters
+  k: 32
+  tied_encoder_init: true
+  use_pre_relu: true
+  
+  # Variational inference parameters
+  vi_temp: 0.67  # Binary-Concrete temperature
+  score_mix_lambda: 0.5  # Blend between log-magnitude and probability evidence
+  st_tau: 0.5  # Softness for straight-through Top-K
+  
+  # Loss coefficients
+  mse_coeff: 1.0  # Reconstruction loss coefficient
+  kl_coeff: 1e-3  # KL coefficient against prior Bernoulli(rho)
+  card_coeff: 0.05  # Soft-cardinality calibration on soft mask
+  
+  # Prior & dual ascent for expected-K
+  prior_rate: null  # rho for prior; default K/C if None
+  dual_lr: 0.01  # Dual ascent step size for lambda (0 disables)
+  dual_init: 0.0  # Initial lambda for expected-K constraint
+  
+  # Auxiliary K (optional)
+  aux_k: null  # Auxiliary K from inactive set
+  aux_coeff: null  # Auxiliary reconstruction loss coeff 

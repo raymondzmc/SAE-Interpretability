@@ -23,6 +23,9 @@ from models.saes import (
     LagrangianHardConcreteSAE,
     LagrangianHardConcreteSAEConfig,
     LagrangianHardConcreteSAEOutput,
+    VITopKSAE,
+    VITopKSAEConfig,
+    VITopKSAEOutput,
     create_sae_config,
 )
 from models.transformer import SAETransformer, SAETransformerOutput
@@ -53,6 +56,9 @@ __all__ = [
     "LagrangianHardConcreteSAE",
     "LagrangianHardConcreteSAEConfig",
     "LagrangianHardConcreteSAEOutput",
+    "VITopKSAE",
+    "VITopKSAEConfig", 
+    "VITopKSAEOutput",
     "create_sae_config",
     "load_tlens_model",
     "load_pretrained_saes",

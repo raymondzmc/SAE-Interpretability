@@ -34,8 +34,7 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
     """
     if projects is None:
         projects = [
-            "raymondl/tinystories-1m-hardconcrete",  # HardConcrete variants and Top-K
-            "raymondl/tinystories-1m"                # ReLU and Gated SAEs
+            "raymondl/tinystories-1m-test"  # Test project with separate, decoder_transpose, scale, topk runs
         ]
     
     print(f"Collecting metrics data from {len(projects)} Wandb projects...")
@@ -60,15 +59,12 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
     print(f"\nTotal runs across all projects: {len(all_runs)}")
     runs = all_runs
     
-    # Collect data by SAE type
+    # Collect data by SAE type - updated for the new run types
     data = {
-        'relu': [],
-        'gated': [],
-        'standard_hardconcrete': [],      # Standard HardConcrete
-        'relu_hardconcrete': [],          # ReLU HardConcrete  
-        'standard_lagrangian_hardconcrete': [],  # Standard Lagrangian HardConcrete
-        'relu_lagrangian_hardconcrete': [],      # ReLU Lagrangian HardConcrete
-        'topk': []  # Top-K type
+        'separate': [],
+        'decoder_transpose': [],
+        'scale': [],
+        'topk': []
     }
     
     # Track layer names
@@ -77,22 +73,16 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
     for run in runs:
         name_lower = run.name.lower()
         
-        # Determine SAE type based on run name patterns
+        # Determine SAE type based on run name patterns - updated logic
         sae_type = None
-        if 'relu_lagrangian_hardconcrete' in name_lower:
-            sae_type = 'relu_lagrangian_hardconcrete'
-        elif 'standard_lagrangian_hardconcrete' in name_lower:
-            sae_type = 'standard_lagrangian_hardconcrete'
-        elif 'relu_hardconcrete' in name_lower:
-            sae_type = 'relu_hardconcrete'
-        elif 'standard_hardconcrete' in name_lower:
-            sae_type = 'standard_hardconcrete'
+        if 'separate' in name_lower:
+            sae_type = 'separate'
+        elif 'decoder_transpose' in name_lower or 'decoder-transpose' in name_lower:
+            sae_type = 'decoder_transpose'
+        elif 'scale' in name_lower:
+            sae_type = 'scale'
         elif 'topk' in name_lower or 'top-k' in name_lower or 'top_k' in name_lower:
             sae_type = 'topk'
-        elif 'relu' in name_lower and 'hardconcrete' not in name_lower and 'lagrangian' not in name_lower:
-            sae_type = 'relu'
-        elif 'gated' in name_lower and 'hardconcrete' not in name_lower and 'lagrangian' not in name_lower:
-            sae_type = 'gated'
         else:
             continue  # Skip other types
         
@@ -107,43 +97,10 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
         if metrics:
             # Extract hyperparameters based on SAE type
             sparsity_coeff = None
-            rho_value = None
             k_value = None
             
-            # For standard and relu hardconcrete: extract sparsity_coeff
-            if sae_type in ['standard_hardconcrete', 'relu_hardconcrete']:
-                if 'sparsity_coeff_' in run.name:
-                    coeff_str = run.name.split('sparsity_coeff_')[1].split('_')[0]
-                    try:
-                        sparsity_coeff = float(coeff_str)
-                    except:
-                        sparsity_coeff = None
-            
-            # For lagrangian variants: extract rho
-            elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                if 'rho_' in run.name:
-                    rho_str = run.name.split('rho_')[1].split('_')[0]
-                    try:
-                        rho_value = float(rho_str)
-                    except:
-                        rho_value = None
-                
-                # If not found in name, try to load from model config
-                if rho_value is None:
-                    try:
-                        print(f"    Loading Lagrangian HC model to extract rho value...")
-                        model = SAETransformer.from_wandb(f"{run_project}/{run.id}")
-                        if hasattr(model.sae_config, 'rho'):
-                            rho_value = model.sae_config.rho
-                        # Clean up model
-                        del model
-                        import torch
-                        torch.cuda.empty_cache()
-                    except Exception as e:
-                        print(f"    Could not extract rho value: {e}")
-            
             # For Top-K: extract k value
-            elif sae_type == 'topk':
+            if sae_type == 'topk':
                 if '_k_' in name_lower:
                     try:
                         k_str = name_lower.split('_k_')[1].split('_')[0]
@@ -179,7 +136,6 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
                 'run_name': run.name,
                 'run_id': run.id,
                 'sparsity_coeff': sparsity_coeff,
-                'rho_value': rho_value,
                 'k_value': k_value,
                 'layers': {}
             }
@@ -272,35 +228,26 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
     
     # Color scheme for different SAE types - more distinct colors
     colors = {
-        'relu': '#1f77b4',                        # Blue
-        'gated': '#ff7f0e',                       # Orange  
-        'standard_hardconcrete': '#2ca02c',       # Green
-        'relu_hardconcrete': '#d62728',           # Red
-        'standard_lagrangian_hardconcrete': '#9467bd',  # Purple
-        'relu_lagrangian_hardconcrete': '#8c564b',      # Brown
-        'topk': '#e377c2'                         # Pink
+        'separate': '#1f77b4',                        # Blue
+        'decoder_transpose': '#ff7f0e',               # Orange  
+        'scale': '#2ca02c',                           # Green
+        'topk': '#d62728'                             # Red
     }
     
     # Marker styles - more distinct shapes
     markers = {
-        'relu': 'o',                              # Circle
-        'gated': 's',                             # Square
-        'standard_hardconcrete': '^',             # Triangle up
-        'relu_hardconcrete': 'v',                 # Triangle down
-        'standard_lagrangian_hardconcrete': 'D',  # Diamond
-        'relu_lagrangian_hardconcrete': 'p',      # Pentagon
-        'topk': 'h'                               # Hexagon
+        'separate': 'o',                              # Circle
+        'decoder_transpose': 's',                     # Square
+        'scale': '^',                                 # Triangle up
+        'topk': 'v'                                   # Triangle down
     }
     
     # Labels for legend
     labels = {
-        'relu': 'ReLU',
-        'gated': 'Gated',
-        'standard_hardconcrete': 'Standard HC',
-        'relu_hardconcrete': 'ReLU HC',
-        'standard_lagrangian_hardconcrete': 'Standard Lagrangian HC',
-        'relu_lagrangian_hardconcrete': 'ReLU Lagrangian HC',
-        'topk': 'Ours'
+        'separate': 'Separate',
+        'decoder_transpose': 'Decoder Transpose',
+        'scale': 'Scale',
+        'topk': 'Top-K'
     }
     
     # Track filtered statistics
@@ -317,8 +264,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 1: MSE vs L0 (minimize both)
         ax1 = axes[0]
-        for sae_type in ['relu', 'gated', 'standard_hardconcrete', 'relu_hardconcrete', 
-                         'standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete', 'topk']:
+        for sae_type in ['separate', 'decoder_transpose', 'scale', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -340,8 +286,6 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                             # Get appropriate label based on SAE type
                             if sae_type == 'topk':
                                 param_labels.append(run_data.get('k_value', None))
-                            elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                                param_labels.append(run_data.get('rho_value', None))
                             else:
                                 # For all other SAE types, use sparsity coefficient
                                 param_labels.append(run_data.get('sparsity_coeff', None))
@@ -370,14 +314,6 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         # Format label for display
                         if sae_type == 'topk':
                             label = f'k={param}'
-                        elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                            # Format rho value for better readability
-                            if param >= 0.01:
-                                label = f'rho={param:.2f}'
-                            elif param >= 0.001:
-                                label = f'rho={param:.3f}'
-                            else:
-                                label = f'rho={param:.0e}'
                         else:
                             # For sparsity coefficients
                             if param >= 0.01:
@@ -418,8 +354,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 2: Explained Variance vs L0 (minimize L0, maximize explained variance)
         ax2 = axes[1]
-        for sae_type in ['relu', 'gated', 'standard_hardconcrete', 'relu_hardconcrete', 
-                         'standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete', 'topk']:
+        for sae_type in ['separate', 'decoder_transpose', 'scale', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -440,8 +375,6 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                             # Get appropriate label based on SAE type
                             if sae_type == 'topk':
                                 param_labels.append(run_data.get('k_value', None))
-                            elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                                param_labels.append(run_data.get('rho_value', None))
                             else:
                                 # For all other SAE types, use sparsity coefficient
                                 param_labels.append(run_data.get('sparsity_coeff', None))
@@ -467,14 +400,6 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         # Format label for display
                         if sae_type == 'topk':
                             label = f'k={param}'
-                        elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                            # Format rho value for better readability
-                            if param >= 0.01:
-                                label = f'rho={param:.2f}'
-                            elif param >= 0.001:
-                                label = f'rho={param:.3f}'
-                            else:
-                                label = f'rho={param:.0e}'
                         else:
                             # For sparsity coefficients
                             if param >= 0.01:
@@ -515,8 +440,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 3: Alive Dictionary Elements vs L0
         ax3 = axes[2]
-        for sae_type in ['relu', 'gated', 'standard_hardconcrete', 'relu_hardconcrete', 
-                         'standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete', 'topk']:
+        for sae_type in ['separate', 'decoder_transpose', 'scale', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -537,8 +461,6 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                             # Get appropriate label based on SAE type
                             if sae_type == 'topk':
                                 param_labels.append(run_data.get('k_value', None))
-                            elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                                param_labels.append(run_data.get('rho_value', None))
                             else:
                                 # For all other SAE types, use sparsity coefficient
                                 param_labels.append(run_data.get('sparsity_coeff', None))
@@ -564,14 +486,6 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
                         # Format label for display
                         if sae_type == 'topk':
                             label = f'k={param}'
-                        elif sae_type in ['standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete']:
-                            # Format rho value for better readability
-                            if param >= 0.01:
-                                label = f'rho={param:.2f}'
-                            elif param >= 0.001:
-                                label = f'rho={param:.3f}'
-                            else:
-                                label = f'rho={param:.0e}'
                         else:
                             # For sparsity coefficients
                             if param >= 0.01:
@@ -658,12 +572,9 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
     
     # Define display names
     display_names = {
-        'relu': 'ReLU',
-        'gated': 'Gated',
-        'standard_hardconcrete': 'Standard HardConcrete',
-        'relu_hardconcrete': 'ReLU HardConcrete',
-        'standard_lagrangian_hardconcrete': 'Standard Lagrangian HardConcrete',
-        'relu_lagrangian_hardconcrete': 'ReLU Lagrangian HardConcrete',
+        'separate': 'Separate',
+        'decoder_transpose': 'Decoder Transpose',
+        'scale': 'Scale',
         'topk': 'Top-K'
     }
     
@@ -672,8 +583,7 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
         print(f"LAYER: {layer_name}")
         print(f"{'='*80}")
         
-        for sae_type in ['relu', 'gated', 'standard_hardconcrete', 'relu_hardconcrete', 
-                         'standard_lagrangian_hardconcrete', 'relu_lagrangian_hardconcrete', 'topk']:
+        for sae_type in ['separate', 'decoder_transpose', 'scale', 'topk']:
             if not data.get(sae_type):
                 continue
             
@@ -737,14 +647,14 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Plot Pareto curves for all SAE types including HardConcrete variants"
+        description="Plot Pareto curves for SAE types: separate, decoder_transpose, scale, and topk"
     )
     parser.add_argument(
         "--projects",
         type=str,
         nargs='+',
         default=None,
-        help="Wandb projects to collect data from (default: raymondl/tinystories-1m-hardconcrete and raymondl/tinystories-1m)"
+        help="Wandb projects to collect data from (default: raymondl/tinystories-1m-test)"
     )
     parser.add_argument(
         "--output-dir",

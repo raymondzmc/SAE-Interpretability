@@ -29,6 +29,8 @@ from models.saes import (
     TopKSAE,
     GumbelTopKSAEConfig,
     GumbelTopKSAE,
+    VITopKSAEConfig,
+    VITopKSAE,
     create_sae_config,
 )
 from models.loader import load_tlens_model
@@ -154,6 +156,25 @@ class SAETransformer(torch.nn.Module):
                     decoder_bias=sae_config.decoder_bias,
                     aux_k=sae_config.aux_k,
                     aux_coeff=sae_config.aux_coeff,
+                ).to(device)
+            elif isinstance(sae_config, VITopKSAEConfig):
+                self.saes[self.all_sae_positions[i]] = VITopKSAE(
+                    input_size=input_size,
+                    n_dict_components=int(sae_config.dict_size_to_input_ratio * input_size),
+                    k=sae_config.k,
+                    mse_coeff=sae_config.mse_coeff,
+                    aux_k=sae_config.aux_k,
+                    aux_coeff=sae_config.aux_coeff,
+                    tied_encoder_init=sae_config.tied_encoder_init,
+                    use_pre_relu=sae_config.use_pre_relu,
+                    vi_temp=sae_config.vi_temp,
+                    score_mix_lambda=sae_config.score_mix_lambda,
+                    st_tau=sae_config.st_tau,
+                    kl_coeff=sae_config.kl_coeff,
+                    prior_rate=sae_config.prior_rate,
+                    card_coeff=sae_config.card_coeff,
+                    dual_lr=sae_config.dual_lr,
+                    dual_init=sae_config.dual_init,
                 ).to(device)
             else:
                 raise ValueError(f"Unsupported SAE type: {sae_config.sae_type}")
