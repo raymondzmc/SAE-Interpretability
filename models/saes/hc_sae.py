@@ -18,9 +18,9 @@ class HardConcreteSAEConfig(SAEConfig):
 
 class HardConcreteSAEOutput(SAEOutput):
     """HardConcrete SAE output that extends SAEOutput with additional parameters."""
-    z: torch.Tensor
-    beta: float
-    magnitude: torch.Tensor
+    # z: torch.Tensor
+    # beta: float
+    # magnitude: torch.Tensor
     gate_logits: torch.Tensor
     thresholds: torch.Tensor
     temperature: float
