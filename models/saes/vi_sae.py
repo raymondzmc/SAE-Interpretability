@@ -180,10 +180,7 @@ class VITopKSAE(BaseSAE):
         self.gate_gamma_h = nn.Parameter(torch.zeros(n_dict_components))
         self.gate_beta_h = nn.Parameter(torch.full((n_dict_components,), torch.logit(torch.tensor(self.prior_rate))))
 
-        self.rho_base = float(self.prior_rate) if prior_rate is not None else (self.k / float(n_dict_components))
-        self.rho_warm = 0.1  # fat prior early
-        self.warmup_ratio = 0.4  # tune (5–20% of training)
-        self.register_buffer("_step", torch.tensor(0, dtype=torch.long), persistent=True)
+        self.k_warmup_ratio = 0.4
 
         # initialize gate_beta_h towards warm prior (helps the start)
         with torch.no_grad():
@@ -201,13 +198,13 @@ class VITopKSAE(BaseSAE):
         h = self.ln(r) if self.use_ln else r
         return self.gate_gamma_h * h + self.gate_beta_h
     
-    def _current_prior(self):
-        if self.train_progress > self.warmup_ratio:
-            return self.rho_base
-        t = min(1.0, self.train_progress.item() / self.warmup_ratio)
+    def _current_k(self):
+        if self.train_progress >= self.k_warmup_ratio:
+            return self.k
+        t = min(1.0, self.train_progress.item() / self.k_warmup_ratio)
         # cosine interp from rho_warm -> rho_base
         alpha = 0.5 * (1 + torch.cos(torch.tensor(t * 3.1415926535, device=self.gate_beta_h.device)))
-        return float(self.rho_base + (self.rho_warm - self.rho_base) * alpha.item())
+        return float(self.k + (self.n_dict_components - self.k) * alpha.item())
 
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
@@ -244,17 +241,17 @@ class VITopKSAE(BaseSAE):
         loss_dict: dict[str, torch.Tensor] = {"mse_loss": mse.detach().clone()}
 
         # KL(q(z|x) || Bernoulli(rho)) for probability calibration
-        if self.kl_coeff > 0.0:
-            rho_t = self._current_prior()
-            kl = _kl_bern_bern(output.p, rho_t).mean()
-            total = total + self.kl_coeff * kl
-            loss_dict["rho_t"] = rho_t
-            loss_dict["kl_gate"] = kl.detach().clone()
+        # if self.kl_coeff > 0.0:
+        #     rho_t = self._current_prior()
+        #     kl = _kl_bern_bern(output.p, rho_t).mean()
+        #     total = total + self.kl_coeff * kl
+        #     loss_dict["rho_t"] = rho_t
+        #     loss_dict["kl_gate"] = kl.detach().clone()
 
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)
         if self.card_coeff > 0.0:
             soft_card = output.soft_mask.sum(dim=-1).mean()
-            card_loss = (soft_card - self.k) ** 2
+            card_loss = (soft_card - self._current_k) ** 2
             total = total + self.card_coeff * card_loss
             loss_dict["card_loss"] = card_loss.detach().clone()
 
