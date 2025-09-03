@@ -21,7 +21,7 @@ class HardConcreteSAEOutput(SAEOutput):
     # z: torch.Tensor
     # beta: float
     # magnitude: torch.Tensor
-    gate_logits: torch.Tensor
+    # gate_logits: torch.Tensor
     thresholds: torch.Tensor
     temperature: float
     soft_gates: torch.Tensor
@@ -139,7 +139,7 @@ class HardConcreteSAE(BaseSAE):
             output=x_hat,
             gates=gates if self.training else (pre_acts > thresholds).float(),
             thresholds=thresholds,
-            gate_logits=gate_logits,
+            # gate_logits=gate_logits,
             soft_gates=soft_gates,
             temperature=self.temperature,
         )
