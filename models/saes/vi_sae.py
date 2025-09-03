@@ -182,10 +182,6 @@ class VITopKSAE(BaseSAE):
 
         self.k_warmup_ratio = 0.4
 
-        # initialize gate_beta_h towards warm prior (helps the start)
-        with torch.no_grad():
-            self.gate_beta_h.copy_(torch.full_like(self.gate_beta_h, torch.logit(torch.tensor(self.rho_warm))))
-
     @property
     def dict_elements(self) -> torch.Tensor:
         return F.normalize(self.decoder.weight, dim=0)
@@ -202,7 +198,7 @@ class VITopKSAE(BaseSAE):
         if self.train_progress >= self.k_warmup_ratio:
             return self.k
         t = min(1.0, self.train_progress.item() / self.k_warmup_ratio)
-        # cosine interp from rho_warm -> rho_base
+        # cosine interp from self.n_dict_components -> self.k
         alpha = 0.5 * (1 + torch.cos(torch.tensor(t * 3.1415926535, device=self.gate_beta_h.device)))
         return float(self.k + (self.n_dict_components - self.k) * alpha.item())
 
