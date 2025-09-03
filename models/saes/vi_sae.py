@@ -181,7 +181,7 @@ class VITopKSAE(BaseSAE):
         self.gate_beta_h = nn.Parameter(torch.full((n_dict_components,), torch.logit(torch.tensor(self.prior_rate))))
 
         self.rho_base = float(self.prior_rate) if prior_rate is not None else (self.k / float(n_dict_components))
-        self.rho_warm = float(min(0.1, 4.0 * self.rho_base))  # fat prior early
+        self.rho_warm = 0.1  # fat prior early
         self.warmup_ratio = 0.4  # tune (5–20% of training)
         self.register_buffer("_step", torch.tensor(0, dtype=torch.long), persistent=True)
 
