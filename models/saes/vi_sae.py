@@ -248,6 +248,7 @@ class VITopKSAE(BaseSAE):
             rho_t = self._current_prior()
             kl = _kl_bern_bern(output.p, rho_t).mean()
             total = total + self.kl_coeff * kl
+            loss_dict["rho_t"] = rho_t
             loss_dict["kl_gate"] = kl.detach().clone()
 
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)

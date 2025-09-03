@@ -298,6 +298,7 @@ def train(
                     "grad_updates": grad_updates,
                     "total_tokens": total_tokens,
                     "lr": optimizer.param_groups[0]["lr"],
+                    "progress_ratio": progress_ratio,
                 }
                 if current_beta is not None:
                     log_info["beta"] = current_beta
