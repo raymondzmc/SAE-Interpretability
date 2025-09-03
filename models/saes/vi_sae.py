@@ -247,7 +247,7 @@ class VITopKSAE(BaseSAE):
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)
         if self.card_coeff > 0.0:
             soft_card = output.soft_mask.sum(dim=-1).mean()
-            card_loss = (soft_card - self._current_k) ** 2
+            card_loss = (soft_card - self._current_k()) ** 2
             total = total + self.card_coeff * card_loss
             loss_dict["card_loss"] = card_loss.detach().clone()
 
