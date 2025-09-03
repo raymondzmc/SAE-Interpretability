@@ -207,7 +207,7 @@ class VITopKSAE(BaseSAE):
         t = min(1.0, self.train_progress.item() / self.warmup_ratio)
         # cosine interp from rho_warm -> rho_base
         alpha = 0.5 * (1 + torch.cos(torch.tensor(t * 3.1415926535, device=self.gate_beta_h.device)))
-        return float(self.rho_base + (self.rho_warm - self.rho_base) * alpha.item())
+        return self.rho_base + (self.rho_warm - self.rho_base) * alpha.item()
 
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
@@ -248,7 +248,7 @@ class VITopKSAE(BaseSAE):
             rho_t = self._current_prior()
             kl = _kl_bern_bern(output.p, rho_t).mean()
             total = total + self.kl_coeff * kl
-            loss_dict["rho_t"] = rho_t
+            loss_dict["rho_t"] = rho_t.detach().clone()
             loss_dict["kl_gate"] = kl.detach().clone()
 
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)
