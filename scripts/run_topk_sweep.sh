@@ -9,4 +9,4 @@ CUDA_VISIBLE_DEVICES=0 python run_experiments.py \
 
 CUDA_VISIBLE_DEVICES=0 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-test \
---filter_runs_by_name topk
+--filter_runs_by_name tied_encoder_init
