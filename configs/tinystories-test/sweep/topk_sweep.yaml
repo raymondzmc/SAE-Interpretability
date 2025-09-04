@@ -2,4 +2,3 @@
 
 # Sparsity coefficient sweep  
 k: [8, 16, 32, 64]
-use_pre_relu: [False]
