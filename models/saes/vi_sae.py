@@ -165,6 +165,8 @@ class VITopKSAE(BaseSAE):
         self.encoder = nn.Linear(input_size, n_dict_components, bias=False)
         self.decoder = nn.Linear(n_dict_components, input_size, bias=False)
 
+        self.magnitude_activation = torch.nn.Softplus()
+
         self.gate_ln = nn.LayerNorm(n_dict_components, elementwise_affine=False)
         self.gate_encoder = nn.Linear(n_dict_components, n_dict_components, bias=False)
 
@@ -200,7 +202,7 @@ class VITopKSAE(BaseSAE):
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
         preacts = self.encoder(x_centered)
-        magnitude = torch.softplus(preacts)
+        magnitude = self.magnitude_activation(preacts)
         x_hat = F.linear(magnitude, self.dict_elements, bias=self.decoder_bias)
         # r = F.relu(preacts) if self.use_pre_relu else preacts
 
