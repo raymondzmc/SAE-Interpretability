@@ -165,6 +165,9 @@ class VITopKSAE(BaseSAE):
         self.encoder = nn.Linear(input_size, n_dict_components, bias=False)
         self.decoder = nn.Linear(n_dict_components, input_size, bias=False)
 
+        self.gate_ln = nn.LayerNorm(n_dict_components, elementwise_affine=False)
+        self.gate_encoder = nn.Parameter(n_dict_components, n_dict_components, bias=False)
+
         if init_decoder_orthogonal:
             self.decoder.weight.data = nn.init.orthogonal_(self.decoder.weight.data.T).T
         else:
@@ -197,30 +200,33 @@ class VITopKSAE(BaseSAE):
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
         preacts = self.encoder(x_centered)
-        r = F.relu(preacts) if self.use_pre_relu else preacts
+        magnitude = self.magnitude_activation(preacts)
+        x_hat = F.linear(magnitude, self.dict_elements, bias=self.decoder_bias)
+        # r = F.relu(preacts) if self.use_pre_relu else preacts
 
-        eta = self._gate_logits(r)
-        p = torch.sigmoid(eta)
+        eta = self._gate_logits(preacts)
+        # p = torch.sigmoid(eta)
 
         # Binary-Concrete sample (train) or deterministic proxy (eval)
-        z_tilde = _sample_binary_concrete(eta, temp=self.vi_temp, training=self.training)
+        gate_logits = self.gate_encoder(self.gate_ln(magnitude))
+        p = _sample_binary_concrete(gate_logits, temp=self.vi_temp, training=self.training)
 
-        # Selection score
-        eps = 1e-8
-        if self.training:
-            score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
-        else:
-            score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
+        # # Selection score
+        # eps = 1e-8
+        # if self.training:
+        #     score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(z_tilde + eps)
+        # else:
+        #     score = self.score_mix_lambda * torch.log(r + eps) + (1.0 - self.score_mix_lambda) * torch.log(p + eps)
 
-        st_mask, hard_mask, soft_mask = _topk_st(score, self.k, tau_st=self.st_tau)
+        # st_mask, hard_mask, soft_mask = _topk_st(score, self.k, tau_st=self.st_tau)
 
         # Exact Top-K codes (do not scale magnitudes by z; gate is used for selection)
-        c = r * st_mask
+        c = p * magnitude
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
 
         return VITopKSAEOutput(
             input=x, c=c, output=x_hat, logits=None,
-            preacts=preacts, mask=hard_mask, soft_mask=soft_mask, p=p, eta=eta, score=score
+            preacts=preacts, mask=p, soft_mask=p, p=p, eta=eta, score=p
         )
 
     def compute_loss(self, output: VITopKSAEOutput) -> SAELoss:
@@ -237,11 +243,11 @@ class VITopKSAE(BaseSAE):
             loss_dict["kl_gate"] = kl.detach().clone()
 
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)
-        if self.card_coeff > 0.0:
-            soft_card = output.soft_mask.sum(dim=-1).mean()
-            card_loss = (soft_card - self.k) ** 2
-            total = total + self.card_coeff * card_loss
-            loss_dict["card_loss"] = card_loss.detach().clone()
+        # if self.card_coeff > 0.0:
+        #     soft_card = output.soft_mask.sum(dim=-1).mean()
+        #     card_loss = (soft_card - self.k) ** 2
+        #     total = total + self.card_coeff * card_loss
+        #     loss_dict["card_loss"] = card_loss.detach().clone()
 
         # Dual ascent penalty for expected-K: lambda * (sum_i p_i(x) - K)
         if self.dual_lr > 0.0:
