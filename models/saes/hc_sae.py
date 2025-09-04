@@ -129,7 +129,8 @@ class HardConcreteSAE(BaseSAE):
             features = F.relu(pre_acts) * gates
         else:
             # Hard thresholding during inference
-            features = F.relu(pre_acts) * (pre_acts > thresholds).float()
+            soft_gates = (pre_acts > thresholds).float()
+            features = F.relu(pre_acts) * soft_gates
         
         x_hat = self.decoder(features) + self.decoder_bias
         
