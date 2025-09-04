@@ -166,7 +166,7 @@ class VITopKSAE(BaseSAE):
         self.decoder = nn.Linear(n_dict_components, input_size, bias=False)
 
         self.gate_ln = nn.LayerNorm(n_dict_components, elementwise_affine=False)
-        self.gate_encoder = nn.Parameter(n_dict_components, n_dict_components, bias=False)
+        self.gate_encoder = nn.Linear(n_dict_components, n_dict_components, bias=False)
 
         if init_decoder_orthogonal:
             self.decoder.weight.data = nn.init.orthogonal_(self.decoder.weight.data.T).T
