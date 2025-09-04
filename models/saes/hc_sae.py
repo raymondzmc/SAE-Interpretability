@@ -19,7 +19,6 @@ class HardConcreteSAEConfig(SAEConfig):
 class HardConcreteSAEOutput(SAEOutput):
     """HardConcrete SAE output that extends SAEOutput with additional parameters."""
     z: torch.Tensor
-    beta: float
     magnitude: torch.Tensor
     gate_logits: torch.Tensor
 
@@ -123,6 +122,7 @@ class HardConcreteSAE(BaseSAE):
             output=x_hat,
             z=z,
             gate_logits=gate_logits,
+            magnitude=magnitude,
         )
     
     def calc_l0_loss(self, logits: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:

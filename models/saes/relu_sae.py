@@ -44,7 +44,10 @@ class ReluSAE(BaseSAE):
         # self.encoder[0].weight has shape: (n_dict_components, input_size)
         # self.decoder.weight has shape:    (input_size, n_dict_components)
 
-        self.encoder = nn.Sequential(nn.Linear(input_size, n_dict_components, bias=True), nn.ReLU())
+        self.encoder = nn.Sequential(
+            nn.Linear(input_size, n_dict_components, bias=True),
+            nn.ReLU(),
+        )
         self.decoder = nn.Linear(n_dict_components, input_size, bias=True)
         self.n_dict_components = n_dict_components
         self.input_size = input_size
