@@ -68,6 +68,7 @@ class TopKSAE(BaseSAE):
         aux_coeff: float | None = None,
         init_decoder_orthogonal: bool = True,
         tied_encoder_init: bool = True,
+        initial_beta: float = 5.0,
     ):
         """
         Args:
@@ -121,10 +122,11 @@ class TopKSAE(BaseSAE):
         self.gate_bias = nn.Parameter(torch.ones(n_dict_components))
         
         self.register_buffer("train_progress", torch.tensor(0.0))
-    
-    def sample_hard_concrete(self, logits: torch.Tensor, tau: float = 0.5):
+        self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32))
+
+    def sample_hard_concrete(self, logits: torch.Tensor):
         u = torch.rand_like(logits).clamp_(1e-6, 1-1e-6)
-        s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / tau)
+        s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / self.beta)
         return s
 
     def _apply_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -139,8 +141,7 @@ class TopKSAE(BaseSAE):
         
         # Anneal temperature from 3.0 to 0.5 based on train_progress
         # tau = 5.0 - 4.0 * self.train_progress.item()
-        tau = 5
-        scores = self.sample_hard_concrete(gate_logits, tau=tau)
+        scores = self.sample_hard_concrete(gate_logits)
         
         topk_idx = torch.topk(scores, k=self.k, dim=-1)[1]
         mask = torch.zeros_like(z)
