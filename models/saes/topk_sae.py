@@ -121,7 +121,7 @@ class TopKSAE(BaseSAE):
         p0 = max(1e-4, min(1 - 1e-4, self.k / self.n_dict_components))
         init_logit = math.log(p0) - math.log(1 - p0)
         self.gate_logit = nn.Parameter(torch.full((self.n_dict_components,), init_logit))
-        self.gumbel_temp = 0.8
+        self.gumbel_temp = 1.0
     
     def _st_gumbel_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
