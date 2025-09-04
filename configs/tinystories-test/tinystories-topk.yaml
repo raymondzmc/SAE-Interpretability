@@ -46,6 +46,5 @@ saes:
   sparsity_coeff: null
   k: 32
   tied_encoder_init: true
-  use_pre_relu: true
   aux_k: null
   aux_coeff: null

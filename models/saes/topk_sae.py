@@ -27,7 +27,6 @@ class TopKSAEConfig(SAEConfig):
     sae_type: SAEType = Field(default=SAEType.TOPK, description="Type of SAE (automatically set to topk)")
     k: int = Field(..., description="Number of active features to keep per sample")
     tied_encoder_init: bool = Field(True, description="Initialize encoder as decoder.T")
-    use_pre_relu: bool = Field(True, description="Apply ReLU before Top-K (nonnegative codes)")
 
     # Optional: dead-feature mitigation via auxiliary Top-K on the *inactive* set
     aux_k: int | None = Field(None, description="Auxiliary K for dead-feature loss (select top aux_k from the inactive set)")
@@ -70,7 +69,6 @@ class TopKSAE(BaseSAE):
         aux_coeff: float | None = None,
         init_decoder_orthogonal: bool = True,
         tied_encoder_init: bool = True,
-        use_pre_relu: bool = True,
     ):
         """
         Args:
@@ -83,7 +81,6 @@ class TopKSAE(BaseSAE):
             aux_coeff: Coefficient on the auxiliary reconstruction loss (default 0.0 if aux_k is None).
             init_decoder_orthogonal: Initialize decoder weight columns to be orthonormal.
             tied_encoder_init: Initialize encoder.weight = decoder.weight.T.
-            use_pre_relu: If True, apply ReLU to encoder preactivations before Top-K.
         """
         super().__init__()
         assert k >= 0, "k must be non-negative"
@@ -92,7 +89,7 @@ class TopKSAE(BaseSAE):
         self.input_size = input_size
         self.n_dict_components = n_dict_components
         self.k = int(k)
-        self.use_pre_relu = bool(use_pre_relu)
+        assert self.k <= n_dict_components, "k must be less than or equal to n_dict_components"
 
         # Loss coefficients
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 0.0  # not used, but kept for logs
@@ -127,18 +124,6 @@ class TopKSAE(BaseSAE):
             code: sparse activations after masking to Top-K
             mask: binary mask (same shape as z) with ones at Top-K indices
         """
-        if self.use_pre_relu:
-            z = F.relu(z)
-
-        # If k >= latent_dim, nothing to drop; if k == 0, all-zero code.
-        latent_dim = z.size(-1)
-        if self.k <= 0:
-            mask = torch.zeros_like(z)
-            return torch.zeros_like(z), mask
-        if self.k >= latent_dim:
-            mask = torch.ones_like(z)
-            return z, mask
-
         # Compute Top-K per sample along last dim
         topk_idx = torch.topk(z, k=self.k, dim=-1)[1]
         mask = torch.zeros_like(z)

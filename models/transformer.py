@@ -133,7 +133,6 @@ class SAETransformer(torch.nn.Module):
                     mse_coeff=sae_config.mse_coeff,
                     init_decoder_orthogonal=sae_config.init_decoder_orthogonal,
                     tied_encoder_init=sae_config.tied_encoder_init,
-                    use_pre_relu=sae_config.use_pre_relu,
                     aux_k=sae_config.aux_k,
                     aux_coeff=sae_config.aux_coeff,
                 ).to(device)
@@ -167,7 +166,6 @@ class SAETransformer(torch.nn.Module):
                     mse_coeff=sae_config.mse_coeff,
                     init_decoder_orthogonal=sae_config.init_decoder_orthogonal,
                     tied_encoder_init=sae_config.tied_encoder_init,
-                    use_pre_relu=sae_config.use_pre_relu,
                     st_tau=sae_config.st_tau,
                     vi_temp=sae_config.vi_temp,
                     kl_coeff=sae_config.kl_coeff,
