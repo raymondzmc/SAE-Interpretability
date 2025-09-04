@@ -200,7 +200,7 @@ class VITopKSAE(BaseSAE):
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
         preacts = self.encoder(x_centered)
-        magnitude = torch.softplus0(preacts)
+        magnitude = torch.softplus(preacts)
         x_hat = F.linear(magnitude, self.dict_elements, bias=self.decoder_bias)
         # r = F.relu(preacts) if self.use_pre_relu else preacts
 
