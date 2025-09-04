@@ -119,8 +119,8 @@ class TopKSAE(BaseSAE):
             self.encoder.weight.data.copy_(self.decoder.weight.data.T)
 
         self.gate_ln = nn.LayerNorm(n_dict_components)
-        self.gate_scale = nn.Parameter(torch.ones(n_dict_components))
-        self.gate_bias = nn.Parameter(torch.zeros(n_dict_components))
+        self.gate_scale = nn.Parameter(torch.randn(n_dict_components))
+        self.gate_bias = nn.Parameter(torch.ones(n_dict_components))
         
         self.register_buffer("train_progress", torch.tensor(0.0))
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32))
