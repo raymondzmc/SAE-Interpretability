@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import Field, model_validator
 from models.saes.base import SAEConfig, SAEOutput, SAELoss, BaseSAE
 from utils.enums import SAEType
-from models.saes.activations import get_activation
+from models.saes.activations import ACTIVATION_MAP
 
 
 class LagrangianHardConcreteSAEConfig(SAEConfig):
