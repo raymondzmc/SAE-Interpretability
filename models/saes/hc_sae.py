@@ -141,7 +141,7 @@ class HardConcreteSAE(BaseSAE):
         return penalty_per_element.sum(dim=-1).mean() / self.input_size
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
-        sparsity_loss = self.calc_l0_loss(logits=output.logits)
+        sparsity_loss = self.calc_l0_loss(logits=output.gate_logits)
         mse_loss = F.mse_loss(output.output, output.input)
         loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
         return SAELoss(
