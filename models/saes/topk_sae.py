@@ -118,7 +118,8 @@ class TopKSAE(BaseSAE):
         
         self.gate_r = nn.Parameter(torch.randn(n_dict_components))
         self.gate_scale = nn.Parameter(torch.ones(n_dict_components))
-    
+        self.gate_ln = nn.LayerNorm(n_dict_components, elementwise_affine=False)
+        self.register_buffer("train_progress", torch.tensor(0.0))
     
     def sample_hard_concrete(self, logits: torch.Tensor, tau: float = 0.5):
         u = torch.rand_like(logits).clamp_(1e-6, 1-1e-6)
@@ -133,8 +134,12 @@ class TopKSAE(BaseSAE):
             mask: binary mask (same shape as z) with ones at Top-K indices
         """
         # Compute Top-K per sample along last dim
-        gate_logits = self.gate_r * z + self.gate_scale
-        scores = self.sample_hard_concrete(gate_logits, tau=1)
+        gate_logits = self.gate_r * self.gate_ln(z) + self.gate_scale
+        
+        # Anneal temperature from 3.0 to 0.5 based on train_progress
+        tau = 3.0 - 2.7 * self.train_progress.item()
+        scores = self.sample_hard_concrete(gate_logits, tau=tau)
+        
         topk_idx = torch.topk(scores, k=self.k, dim=-1)[1]
         mask = torch.zeros_like(z)
         mask.scatter_(-1, topk_idx, 1.0)
