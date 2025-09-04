@@ -246,7 +246,6 @@ class VITopKSAE(BaseSAE):
 
         # Dual ascent penalty for expected-K: lambda * (sum_i p_i(x) - K)
         if self.dual_lr > 0.0:
-            import pdb; pdb.set_trace()
             exp_card = output.p.sum(dim=-1).mean()
             lagr_term = self.lambda_dual * (exp_card - self.k) ** 2
             total = total + lagr_term
