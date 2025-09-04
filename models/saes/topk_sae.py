@@ -134,11 +134,11 @@ class TopKSAE(BaseSAE):
             mask: binary mask (same shape as z) with ones at Top-K indices
         """
         # Compute Top-K per sample along last dim
-        gate_logits = self.gate_r * self.gate_ln(z.detach()) + self.gate_scale
+        gate_logits = self.gate_r * self.gate_ln(z) + self.gate_scale
         
         # Anneal temperature from 3.0 to 0.5 based on train_progress
         # tau = 5.0 - 4.0 * self.train_progress.item()
-        tau = 5.0
+        tau = 7.0
         scores = self.sample_hard_concrete(gate_logits, tau=tau)
         
         topk_idx = torch.topk(scores, k=self.k, dim=-1)[1]
