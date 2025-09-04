@@ -119,8 +119,8 @@ class TopKSAE(BaseSAE):
             self.encoder.weight.data.copy_(self.decoder.weight.data.T)
 
         self.gate_ln = nn.LayerNorm(n_dict_components)
-        self.gate_scale = nn.Parameter(torch.randn(n_dict_components))
-        self.gate_bias = nn.Parameter(torch.ones(n_dict_components))
+        self.gate_scale = nn.Parameter(torch.ones(n_dict_components))
+        self.gate_bias = nn.Parameter(torch.zeros(n_dict_components))
         
         self.register_buffer("train_progress", torch.tensor(0.0))
         self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32))
@@ -131,7 +131,7 @@ class TopKSAE(BaseSAE):
         s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / self.beta)
         return s
 
-    def _apply_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _apply_topk(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Apply (optional) ReLU then Top-K selection along the last dimension.
         Returns:
@@ -139,13 +139,13 @@ class TopKSAE(BaseSAE):
             mask: binary mask (same shape as z) with ones at Top-K indices
         """
         # Compute Top-K per sample along last dim
-        gate_logits = self.gate_scale * self.gate_ln(z) + self.gate_bias
+        gate_logits = self.gate_scale * self.gate_ln(x) + self.gate_bias
         scores = self.sample_hard_concrete(gate_logits)
         
         topk_idx = torch.topk(scores, k=self.k, dim=-1)[1]
-        mask = torch.zeros_like(z)
+        mask = torch.zeros_like(x)
         mask.scatter_(-1, topk_idx, 1.0)
-        code = z * mask
+        code = x * mask
         return code, mask
 
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> TopKSAEOutput:
@@ -154,15 +154,11 @@ class TopKSAE(BaseSAE):
         """
         # Center input
         x_centered = x - self.decoder_bias
-        # Encoder preactivations
-        preacts = self.encoder(x_centered)  # (..., n_dict_components)
-        # Top-K sparsification
+        preacts = self.encoder(x_centered)
         c, mask = self._apply_topk(preacts)
-        # Decode using normalized dictionary elements + add bias back
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
         return TopKSAEOutput(input=x, c=c, output=x_hat, logits=None, preacts=preacts, mask=mask)
-    
-    
+
 
     def compute_loss(self, output: TopKSAEOutput) -> SAELoss:
         """
@@ -173,38 +169,9 @@ class TopKSAE(BaseSAE):
           reconstruct with a detached decoder to provide gradient to "dead" features
           without moving the decoder, then compute an auxiliary MSE to the input.
         """
-        # Reconstruction loss
         mse_loss = F.mse_loss(output.output, output.input)
         total_loss = self.mse_coeff * mse_loss
         loss_dict: dict[str, torch.Tensor] = {"mse_loss": mse_loss.detach().clone()}
-
-        # Optional auxiliary dead-feature loss
-        if self.aux_k > 0 and self.aux_coeff > 0.0:
-            z = output.preacts
-            # Zero out the already-selected Top-K, then pick top aux_k from the remainder
-            z_inactive = z * (1.0 - output.mask)
-            # Handle edge cases (aux_k == 0 or >= latent dim)
-            latent_dim = z_inactive.size(-1)
-            aux_k = min(self.aux_k, max(0, latent_dim - self.k))
-            if aux_k > 0:
-                aux_idx = torch.topk(z_inactive, k=aux_k, dim=-1)[1]
-                aux_mask = torch.zeros_like(z_inactive)
-                aux_mask.scatter_(-1, aux_idx, 1.0)
-                aux_code = z * aux_mask  # use actual (ReLUed) magnitudes for those indices
-
-                # Reconstruct with DETACHED normalized decoder and bias
-                with torch.no_grad():
-                    dec_w_detached = F.normalize(self.decoder.weight.detach(), dim=0)
-                    dec_b_detached = self.decoder_bias.detach()
-                x_hat_aux = F.linear(aux_code, dec_w_detached, bias=dec_b_detached)
-
-                aux_loss = F.mse_loss(x_hat_aux, output.input)
-                total_loss = total_loss + self.aux_coeff * aux_loss
-                loss_dict["aux_loss"] = aux_loss.detach().clone()
-            else:
-                # No room for auxiliary picks; report zero aux loss
-                loss_dict["aux_loss"] = torch.zeros((), device=output.input.device)
-
         return SAELoss(loss=total_loss, loss_dict=loss_dict)
 
     @property
