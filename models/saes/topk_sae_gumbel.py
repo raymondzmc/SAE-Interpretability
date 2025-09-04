@@ -1,4 +1,6 @@
 # topk_sae.py
+
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -94,8 +96,10 @@ class TopKSAE(BaseSAE):
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 0.0  # not used, but kept for logs
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
 
-        self.aux_k = int(aux_k) if aux_k is not None and aux_k > 0 else 0
-        self.aux_coeff = (aux_coeff if aux_coeff is not None else 0.0) if self.aux_k > 0 else 0.0
+        # self.aux_k = int(aux_k) if aux_k is not None and aux_k > 0 else 0
+        # self.aux_coeff = (aux_coeff if aux_coeff is not None else 0.0) if self.aux_k > 0 else 0.0
+        self.aux_k = 1600
+        self.aux_coeff = 1 / 32
 
         # Bias used for input centering and added back on decode
         self.decoder_bias = nn.Parameter(torch.zeros(input_size))
@@ -116,14 +120,42 @@ class TopKSAE(BaseSAE):
         if tied_encoder_init:
             self.encoder.weight.data.copy_(self.decoder.weight.data.T)
         
-        self.gate_r = nn.Parameter(torch.randn(n_dict_components))
-        self.gate_scale = nn.Parameter(torch.ones(n_dict_components))
+        p0 = max(1e-4, min(1 - 1e-4, self.k / self.n_dict_components))
+        init_logit = math.log(p0) - math.log(1 - p0)
+        self.gate_logit = nn.Parameter(torch.full((self.n_dict_components,), init_logit))
+        self.gumbel_temp = 1.0
     
-    
-    def sample_hard_concrete(self, logits: torch.Tensor, tau: float = 0.5):
-        u = torch.rand_like(logits).clamp_(1e-6, 1-1e-6)
-        s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / tau)
-        return s
+    def _st_gumbel_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Straight-through Gumbel-TopK:
+        forward: hard Top-K on z + gate_logit + gumbel
+        backward: softmax((z + gate_logit) / tau) surrogate
+        Returns:
+        code: z masked by straight-through mask
+        mask: hard mask used in forward (useful for analysis/metrics)
+        """
+        logits = self.gate_logit  # (C,)
+        if self.training:
+            # Sample per-sample, per-feature Gumbel noise
+            u = torch.rand_like(z).clamp_(1e-6, 1 - 1e-6)
+            g = -torch.log(-torch.log(u))
+            scores = z + logits + self.gumbel_temp * g
+        else:
+            scores = z + logits  # deterministic at eval
+
+        # Hard Top-K (exact K)
+        topk_idx = torch.topk(scores, k=self.k, dim=-1).indices
+        hard = torch.zeros_like(z).scatter(-1, topk_idx, 1.0)
+
+        if self.training:
+            # Soft surrogate for gradients (dense)
+            soft = torch.softmax((z + logits) / self.gumbel_temp, dim=-1)
+            mask = hard + soft - soft.detach()  # straight-through
+        else:
+            mask = hard
+
+        code = z * mask
+        return code, hard  # return hard for accounting
 
     def _apply_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -133,8 +165,6 @@ class TopKSAE(BaseSAE):
             mask: binary mask (same shape as z) with ones at Top-K indices
         """
         # Compute Top-K per sample along last dim
-        gate_logits = self.gate_r * z + self.gate_scale
-        z = self.sample_hard_concrete(gate_logits, tau=1)
         topk_idx = torch.topk(z, k=self.k, dim=-1)[1]
         mask = torch.zeros_like(z)
         mask.scatter_(-1, topk_idx, 1.0)
@@ -149,11 +179,12 @@ class TopKSAE(BaseSAE):
         x_centered = x - self.decoder_bias
         # Encoder preactivations
         preacts = self.encoder(x_centered)  # (..., n_dict_components)
+        c, hard_mask = self._st_gumbel_topk(preacts)
         # Top-K sparsification
-        c, mask = self._apply_topk(preacts)
+        # c, mask = self._apply_topk(preacts)
         # Decode using normalized dictionary elements + add bias back
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
-        return TopKSAEOutput(input=x, c=c, output=x_hat, logits=None, preacts=preacts, mask=mask)
+        return TopKSAEOutput(input=x, c=c, output=x_hat, logits=None, preacts=preacts, mask=hard_mask)
     
     def sample_hard_concrete(self, log_alpha: torch.Tensor, tau: float = 0.5,
                              limit_a: float = -0.1, limit_b: float = 1.1):
@@ -177,6 +208,11 @@ class TopKSAE(BaseSAE):
         mse_loss = F.mse_loss(output.output, output.input)
         total_loss = self.mse_coeff * mse_loss
         loss_dict: dict[str, torch.Tensor] = {"mse_loss": mse_loss.detach().clone()}
+
+        p = torch.sigmoid(self.gate_logit)
+        budget_loss = ((p.sum() - self.k) ** 2) / (self.n_dict_components + 1e-8)
+        total_loss = total_loss + 0.005 * budget_loss
+        loss_dict["budget_loss"] = budget_loss.detach().clone()
 
         # Optional auxiliary dead-feature loss
         if self.aux_k > 0 and self.aux_coeff > 0.0:
