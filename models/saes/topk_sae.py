@@ -209,7 +209,7 @@ class TopKSAE(BaseSAE):
 
         p = torch.sigmoid(self.gate_logit)
         budget_loss = ((p.sum() - self.k) ** 2) / (self.n_dict_components + 1e-8)
-        total_loss = total_loss + self.budget_coeff * budget_loss
+        total_loss = total_loss + 0.005 * budget_loss
         loss_dict["budget_loss"] = budget_loss.detach().clone()
 
         # Optional auxiliary dead-feature loss
