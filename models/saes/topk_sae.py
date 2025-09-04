@@ -140,7 +140,7 @@ class TopKSAE(BaseSAE):
         """
         # Compute Top-K per sample along last dim
         gate_logits = self.gate_scale * self.gate_ln(x) + self.gate_bias
-        scores = self.sample_hard_concrete(gate_logits) * x.abs()
+        scores = self.sample_hard_concrete(gate_logits) * x.detach()
         
         topk_idx = torch.topk(scores, k=self.k, dim=-1)[1]
         mask = torch.zeros_like(x)
