@@ -121,7 +121,7 @@ class TopKSAE(BaseSAE):
         p0 = max(1e-4, min(1 - 1e-4, self.k / self.n_dict_components))
         init_logit = math.log(p0) - math.log(1 - p0)
         self.gate_logit = nn.Parameter(torch.full((self.n_dict_components,), init_logit))
-        self.gumbel_temp = 1.0
+        self.gumbel_tau = 1.0
     
     def _st_gumbel_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -147,7 +147,7 @@ class TopKSAE(BaseSAE):
 
         if self.training:
             # Soft surrogate for gradients (dense)
-            soft = torch.softmax((z + logits) / self.gumbel_tau, dim=-1)
+            soft = torch.softmax((z + logits) / self.gumbel_temp, dim=-1)
             mask = hard + soft - soft.detach()  # straight-through
         else:
             mask = hard
