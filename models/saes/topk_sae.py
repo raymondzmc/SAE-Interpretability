@@ -115,25 +115,17 @@ class TopKSAE(BaseSAE):
 
         if tied_encoder_init:
             self.encoder.weight.data.copy_(self.decoder.weight.data.T)
-        
-        self.gate_r = nn.Parameter(torch.randn(n_dict_components))
-        self.gate_scale = nn.Parameter(torch.ones(n_dict_components))
+
         self.gate_ln = nn.LayerNorm(n_dict_components)
+        self.gate_scale = nn.Parameter(torch.randn(n_dict_components))
+        self.gate_bias = nn.Parameter(torch.ones(n_dict_components))
+        
         self.register_buffer("train_progress", torch.tensor(0.0))
     
-    # def sample_hard_concrete(self, logits: torch.Tensor, tau: float = 0.5):
-    #     u = torch.rand_like(logits).clamp_(1e-6, 1-1e-6)
-    #     s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / tau)
-    #     return s
-    
-    def sample_hard_concrete(self, log_alpha: torch.Tensor, tau: float = 0.5,
-                             limit_a: float = -0.1, limit_b: float = 1.1):
-        # Maddison/Jang (Concrete) + Louizos et al. (Hard-Concrete)
-        u = torch.rand_like(log_alpha).clamp_(1e-6, 1-1e-6)
-        s = torch.sigmoid((log_alpha + torch.log(u) - torch.log(1 - u)) / tau)
-        s_bar = s * (limit_b - limit_a) + limit_a
-        z = s_bar.clamp(0.0, 1.0)  # gate in [0,1]
-        return z
+    def sample_hard_concrete(self, logits: torch.Tensor, tau: float = 0.5):
+        u = torch.rand_like(logits).clamp_(1e-6, 1-1e-6)
+        s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / tau)
+        return s
 
     def _apply_topk(self, z: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -143,7 +135,7 @@ class TopKSAE(BaseSAE):
             mask: binary mask (same shape as z) with ones at Top-K indices
         """
         # Compute Top-K per sample along last dim
-        gate_logits = self.gate_r * self.gate_ln(z) + self.gate_scale
+        gate_logits = self.gate_scale.exp() * self.gate_ln(z) + self.gate_bias
         
         # Anneal temperature from 3.0 to 0.5 based on train_progress
         # tau = 5.0 - 4.0 * self.train_progress.item()
