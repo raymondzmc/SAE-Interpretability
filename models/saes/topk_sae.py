@@ -137,7 +137,7 @@ class TopKSAE(BaseSAE):
         gate_logits = self.gate_r * self.gate_ln(z) + self.gate_scale
         
         # Anneal temperature from 3.0 to 0.5 based on train_progress
-        tau = 3.0 - 2.7 * self.train_progress.item()
+        tau = 5.0 - 4.0 * self.train_progress.item()
         scores = self.sample_hard_concrete(gate_logits, tau=tau)
         
         topk_idx = torch.topk(scores, k=self.k, dim=-1)[1]
