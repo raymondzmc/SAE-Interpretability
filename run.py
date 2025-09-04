@@ -236,11 +236,13 @@ def train(
         loss.backward()
 
         # VI SAE dual update (before optimizer step)
+        import pdb; pdb.set_trace()
         if config.saes.sae_type == SAEType.VI_TOPK:
             with torch.no_grad():
                 for sae_name, sae_output in output.sae_outputs.items():
                     sae = model.saes[sae_name.replace(".", "-")]
                     if isinstance(sae, VITopKSAE):
+                        import pdb; pdb.set_trace()
                         gap = sae_output.p.sum(dim=-1).mean() - sae.k  # E_batch[sum_i p_i] - K
                         sae.update_dual(gap)
 

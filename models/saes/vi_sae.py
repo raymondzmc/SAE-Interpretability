@@ -87,13 +87,6 @@ class VITopKSAEConfig(SAEConfig):
     aux_k: int | None = Field(None, description="Auxiliary K from inactive set")
     aux_coeff: float | None = Field(None, description="Auxiliary reconstruction loss coeff")
 
-    @model_validator(mode="before")
-    @classmethod
-    def set_sae_type(cls, values: dict[str, Any]) -> dict[str, Any]:
-        if isinstance(values, dict):
-            values["sae_type"] = SAEType.TOPK
-        return values
-
 
 class VITopKSAEOutput(SAEOutput):
     preacts: Float[torch.Tensor, "... c"]
@@ -253,6 +246,7 @@ class VITopKSAE(BaseSAE):
 
         # Dual ascent penalty for expected-K: lambda * (sum_i p_i(x) - K)
         if self.dual_lr > 0.0:
+            import pdb; pdb.set_trace()
             exp_card = output.p.sum(dim=-1).mean()
             lagr_term = self.lambda_dual * (exp_card - self.k) ** 2
             total = total + lagr_term
