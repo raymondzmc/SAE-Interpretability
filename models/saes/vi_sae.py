@@ -165,7 +165,7 @@ class VITopKSAE(BaseSAE):
         x_centered = x - self.decoder_bias
         pre = self.encoder(x_centered)
         # score = log magnitude after layernorm for scale invariance
-        s = torch.log(self.ln(r) + 1e-8)
+        s = torch.log(self.ln(pre) + 1e-8)
 
         mu, log_sig = self.thresh_head(s.detach() if not self.training else s)  # amortized q(tau|x)
         if self.training:
@@ -183,7 +183,7 @@ class VITopKSAE(BaseSAE):
         adj = s  # scalar τ shift cancels in ranking; keep adj == s for Top-K
         st_mask, hard_mask, _ = _topk_st(adj, self.k, tau_st=self.st_tau)
 
-        c = r * st_mask
+        c = pre * st_mask
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
         
         return VITopKSAEOutput(
@@ -222,11 +222,8 @@ class VITopKSAE(BaseSAE):
 
         # Optional auxiliary dead-feature loss
         if self.aux_k > 0 and self.aux_coeff > 0.0:
-            # We need (optionally ReLUed) activations for selection that match forward
-
-            # Zero out the already-selected Top-K, then pick top aux_k from the remainder
+            z = output.preacts
             z_inactive = z * (1.0 - output.mask)
-            # Handle edge cases (aux_k == 0 or >= latent dim)
             latent_dim = z_inactive.size(-1)
             aux_k = min(self.aux_k, max(0, latent_dim - self.k))
             if aux_k > 0:
