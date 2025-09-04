@@ -62,7 +62,6 @@ class TopKSAE(BaseSAE):
         input_size: int,
         n_dict_components: int,
         k: int,
-        *,
         sparsity_coeff: float | None = None,  # unused; kept for API parity
         mse_coeff: float | None = None,
         aux_k: int | None = None,
@@ -161,9 +160,7 @@ class TopKSAE(BaseSAE):
 
         # Optional auxiliary dead-feature loss
         if self.aux_k > 0 and self.aux_coeff > 0.0:
-            # We need (optionally ReLUed) activations for selection that match forward
-            z = F.relu(output.preacts) if self.use_pre_relu else output.preacts
-
+            z = output.preacts
             # Zero out the already-selected Top-K, then pick top aux_k from the remainder
             z_inactive = z * (1.0 - output.mask)
             # Handle edge cases (aux_k == 0 or >= latent dim)

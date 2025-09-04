@@ -60,7 +60,6 @@ class VITopKSAEConfig(SAEConfig):
     sae_type: SAEType = Field(default=SAEType.VI_TOPK, description="Type of SAE (automatically set to vi_topk)")
     k: int = Field(..., description="Number of active features to keep per sample")
     tied_encoder_init: bool = Field(True, description="Initialize encoder as decoder.T")
-    use_pre_relu: bool = Field(True, description="Apply ReLU before Top-K (nonnegative codes)")
 
     # Variational inference parameters
     vi_temp: float = Field(0.67, description="Binary-Concrete temperature")
@@ -106,7 +105,7 @@ class VITopKSAE(BaseSAE):
     """
     def __init__(self, input_size: int, n_dict_components: int, k: int,
                  mse_coeff: float = 1.0, init_decoder_orthogonal: bool = True,
-                 tied_encoder_init: bool = True, use_pre_relu: bool = True,
+                 tied_encoder_init: bool = True,
                  st_tau: float = 0.5, vi_temp: float = 0.67,
                  kl_coeff: float = 1e-3, card_coeff: float = 5e-2,
                  score_mix_lambda: float = 0.5, prior_rate: float | None = None,
@@ -114,7 +113,7 @@ class VITopKSAE(BaseSAE):
                  aux_k: int | None = None, aux_coeff: float | None = None):
         super().__init__()
         self.input_size, self.n_dict_components, self.k = input_size, n_dict_components, int(k)
-        self.mse_coeff, self.use_pre_relu = float(mse_coeff), bool(use_pre_relu)
+        self.mse_coeff = float(mse_coeff)
         self.st_tau, self.vi_temp = float(st_tau), float(vi_temp)
         self.kl_coeff, self.card_coeff = float(kl_coeff), float(card_coeff)
         self.score_mix_lambda = float(score_mix_lambda)
@@ -165,7 +164,6 @@ class VITopKSAE(BaseSAE):
     def forward(self, x: Float[torch.Tensor, "... dim"]) -> VITopKSAEOutput:
         x_centered = x - self.decoder_bias
         pre = self.encoder(x_centered)
-        r = F.relu(pre) if self.use_pre_relu else pre
         # score = log magnitude after layernorm for scale invariance
         s = torch.log(self.ln(r) + 1e-8)
 
@@ -225,7 +223,6 @@ class VITopKSAE(BaseSAE):
         # Optional auxiliary dead-feature loss
         if self.aux_k > 0 and self.aux_coeff > 0.0:
             # We need (optionally ReLUed) activations for selection that match forward
-            z = F.relu(output.preacts) if self.use_pre_relu else output.preacts
 
             # Zero out the already-selected Top-K, then pick top aux_k from the remainder
             z_inactive = z * (1.0 - output.mask)

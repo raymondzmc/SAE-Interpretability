@@ -47,7 +47,6 @@ saes:
   # Top-K specific parameters
   k: 32
   tied_encoder_init: true
-  use_pre_relu: true
   
   # Variational inference parameters
   vi_temp: 0.67  # Binary-Concrete temperature
