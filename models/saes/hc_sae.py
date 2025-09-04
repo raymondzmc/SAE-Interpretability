@@ -115,7 +115,7 @@ class HardConcreteSAE(BaseSAE):
         magnitude = self.magnitude_encoder(x_normalized)
         z = hard_concrete(gate_logits, beta=self.beta, l=self.l, r=self.r, training=self.training)
         c = z * magnitude
-        x_hat = self.decoder(c, bias=self.decoder_bias)
+        x_hat = F.linear(c, self.dict_elements, bias=self.decoder.bias)
         
         return HardConcreteSAEOutput(
             input=x,
