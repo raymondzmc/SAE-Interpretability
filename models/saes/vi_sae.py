@@ -230,12 +230,12 @@ class VITopKSAE(BaseSAE):
         loss_dict: dict[str, torch.Tensor] = {"mse_loss": mse.detach().clone()}
 
         # KL(q(z|x) || Bernoulli(rho)) for probability calibration
-        if self.kl_coeff > 0.0:
-            rho_t = self.prior_rate
-            kl = _kl_bern_bern(output.p, rho_t).mean()
-            total = total + self.kl_coeff * kl
-            loss_dict["rho_t"] = rho_t
-            loss_dict["kl_gate"] = kl.detach().clone()
+        # if self.kl_coeff > 0.0:
+        #     rho_t = self.prior_rate
+        #     kl = _kl_bern_bern(output.p, rho_t).mean()
+        #     total = total + self.kl_coeff * kl
+        #     loss_dict["rho_t"] = rho_t
+        #     loss_dict["kl_gate"] = kl.detach().clone()
 
         # Soft cardinality calibration on soft Top-K mask (stabilizes thresholding)
         # if self.card_coeff > 0.0:

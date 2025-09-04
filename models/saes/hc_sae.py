@@ -18,48 +18,55 @@ class HardConcreteSAEConfig(SAEConfig):
 
 class HardConcreteSAEOutput(SAEOutput):
     """HardConcrete SAE output that extends SAEOutput with additional parameters."""
-    # z: torch.Tensor
-    # beta: float
-    # magnitude: torch.Tensor
-    # gate_logits: torch.Tensor
-    thresholds: torch.Tensor
-    temperature: float
-    soft_gates: torch.Tensor
-    gates: torch.Tensor
+    z: torch.Tensor
+    beta: float
+    magnitude: torch.Tensor
+    gate_logits: torch.Tensor
 
 
-def kl_to_target(
-    p_open: torch.Tensor,
-    rho: float = 0.005,
-    reduction: str = "mean",
-    eps: float = 1e-8,
+def hard_concrete(
+    logits: torch.Tensor,
+    beta: float,
+    l: float,
+    r: float,
+    training: bool = True,
+    epsilon: float = 1e-6
 ) -> torch.Tensor:
     """
-    KL(q || rho) for Bernoulli gates, elementwise over p_open, reduced to a scalar.
+    Sample from the Hard Concrete distribution using the reparameterization trick.
+    Used for L0 regularization as described in https://arxiv.org/abs/1712.01312.
+
+    Produces samples in [0, 1] via a stretched, hard-thresholded sigmoid transformation
+    of a log-uniform variable.
 
     Args:
-        p_open: Tensor of open probabilities q in [0,1], any shape.
-                (For Hard-Concrete, use the expected-open surrogate; see helper below.)
-        rho:    Target open probability in (0,1), typically K / n_dict.
-        reduction: "mean" | "sum" | "none".
-        eps:   Small epsilon for numerical stability.
+        logits: Logits parameter (alpha) for the distribution. Shape: (*, num_features)
+        beta: Temperature parameter. Controls the sharpness of the distribution.
+        l: Lower bound of the stretch interval.
+        r: Upper bound of the stretch interval.
+        training: Whether in training mode (stochastic) or eval mode (deterministic).
+        epsilon: Small constant for numerical stability.
 
     Returns:
-        Scalar loss if reduction != "none"; else same shape as p_open.
+        z: Sampled values (hard-thresholded in [0, 1]). Shape: (*, num_features)
     """
-    # clamp both q and ρ away from {0,1} to avoid log(0)
-    q = p_open.clamp(min=eps, max=1.0 - eps)
-    rho_t = torch.as_tensor(rho, dtype=q.dtype, device=q.device).clamp(min=eps, max=1.0 - eps)
-
-    # KL(q||ρ) = q log(q/ρ) + (1-q) log((1-q)/(1-ρ))
-    kl = q * (torch.log(q) - torch.log(rho_t)) + (1.0 - q) * (torch.log(1.0 - q) - torch.log(1.0 - rho_t))
-
-    if reduction == "none":
-        return kl
-    elif reduction == "sum":
-        return kl.sum()
+    if training:
+        # Sample u ~ Uniform(0, 1)
+        u = torch.rand_like(logits)
+        # Transform to Concrete variable s ~ Concrete(logits, beta) = Sigmoid((log(u) - log(1-u) + logits) / beta)
+        s = torch.sigmoid((torch.log(u + epsilon) - torch.log(1.0 - u + epsilon) + logits) / beta)
+        # Stretch s to (l, r)
+        s_stretched = s * (r - l) + l
+        # Apply hard threshold (clamp to [0, 1]) -> z ~ HardConcrete(logits, beta)
+        z = torch.clamp(s_stretched, min=0.0, max=1.0)
     else:
-        return kl.mean()
+        # Evaluation mode: use deterministic output
+        # Use the clamped stretched sigmoid mean approximation
+        s = torch.sigmoid(logits / beta)
+        s_stretched = s * (r - l) + l
+        z = torch.clamp(s_stretched, min=0.0, max=1.0)
+
+    return z
 
 
 def cosine_ramp(progress: torch.Tensor, end: float) -> torch.Tensor:
@@ -86,100 +93,64 @@ class HardConcreteSAE(BaseSAE):
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 1.0
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
         self.encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
+        self.layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
+        self.magnitude_encoder = torch.nn.Linear(input_size, n_dict_components, bias=True)
         self.decoder = torch.nn.Linear(n_dict_components, input_size, bias=False)
         self.decoder_bias = torch.nn.Parameter(torch.zeros(input_size))
-        self.threshold_mu = torch.nn.Parameter(torch.zeros(n_dict_components))
-        self.threshold_log_var = torch.nn.Parameter(torch.ones(n_dict_components) * -2)
-        self.register_buffer("beta", torch.tensor(1.0))
-        self.temperature = 1.0
+        self.register_buffer("beta", torch.tensor(initial_beta, dtype=torch.float32, device='cpu'))
+        self.l, self.r = stretch_limits
+        assert self.l < 0.0 and self.r > 1.0, "stretch_limits must satisfy l < 0 and r > 1 for L0 penalty calculation"
 
-    def sample_thresholds(self, training=True):
-        """Sample thresholds from learned distributions with temperature scaling."""
-        if training:
-            # Reparameterization trick
-            std = torch.exp(0.5 * self.threshold_log_var)
-            eps = torch.randn_like(std) * self.temperature
-            thresholds = self.threshold_mu + eps * std
-            
-            # Ensure positive thresholds with softplus
-            thresholds = F.softplus(thresholds)
-        else:
-            # Use mean during evaluation
-            thresholds = F.softplus(self.threshold_mu)
-        
-        return thresholds
+        if init_decoder_orthogonal:
+            self.decoder.weight.data = torch.nn.init.orthogonal_(self.decoder.weight.data.T).T
+
+        self.encoder.weight.data.copy_(self.decoder.weight.data.T)
+        self.magnitude_encoder.weight.data.copy_(self.decoder.weight.data.T)
+
 
     def forward(self, x):
         x_centered = x - self.decoder_bias
-        pre_acts = self.encoder(x_centered)
-        
-        # Sample thresholds from variational distribution
-        thresholds = self.sample_thresholds(self.training)
-        
-        # Continuous relaxation during training, hard jump during inference
-        if self.training:
-            # Sigmoid-based soft threshold with temperature
-            gate_logits = (pre_acts - thresholds) / self.temperature
-            soft_gates = torch.sigmoid(gate_logits * 10)  # Sharper sigmoid
-            
-            # Straight-through estimator: hard forward, soft backward
-            hard_gates = (pre_acts > thresholds).float()
-            gates = hard_gates - soft_gates.detach() + soft_gates
-            
-            features = F.relu(pre_acts) * gates
-        else:
-            # Hard thresholding during inference
-            soft_gates = (pre_acts > thresholds).float()
-            features = F.relu(pre_acts) * soft_gates
-        
-        x_hat = self.decoder(features) + self.decoder_bias
+        x_normalized = self.layer_norm(x_centered)
+        gate_logits = self.encoder(x_normalized)
+        magnitude = self.magnitude_encoder(x_normalized)
+        z = hard_concrete(gate_logits, beta=self.beta, l=self.l, r=self.r, training=self.training)
+        c = z * magnitude
+        x_hat = self.decoder(c, bias=self.decoder_bias)
         
         return HardConcreteSAEOutput(
             input=x,
-            c=features,
+            c=c,
             output=x_hat,
-            gates=gates if self.training else (pre_acts > thresholds).float(),
-            thresholds=thresholds,
-            # gate_logits=gate_logits,
-            soft_gates=soft_gates,
-            temperature=self.temperature,
+            z=z,
+            gate_logits=gate_logits,
         )
+    
+    def calc_l0_loss(self, logits: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
+        safe_l = self.l if abs(self.l) > epsilon else -epsilon
+        safe_r = self.r if abs(self.r) > epsilon else epsilon
+
+        # Ensure the argument to log is positive
+        log_arg = -safe_l / safe_r
+        if log_arg <= 0:
+            print(f"Warning: Invalid term for log in L0 penalty: -l/r = {log_arg:.4f}. Returning 0 penalty.")
+            # Return a tensor with the correct device and dtype
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+
+        log_ratio = math.log(log_arg)
+        penalty_per_element = torch.sigmoid(logits - self.beta * log_ratio)
+        return penalty_per_element.sum(dim=-1).mean() / self.input_size
 
     def compute_loss(self, output: HardConcreteSAEOutput) -> SAELoss:
-        if self.training:
-            # During training, use soft gates for differentiability
-            # Expected L0 norm ≈ sum of gate probabilities
-            l0_loss = output.soft_gates.sum(dim=-1).mean() / self.n_dict_components
-        else:
-            # During evaluation, use hard gates
-            l0_loss = output.gates.sum(dim=-1).mean() / self.n_dict_components
-        
-        # expected_open_prob = torch.sigmoid(output.gate_logits - self.beta * math.log(-self.l / self.r))
-        # rho = 0.005   # hardcoded for now
-        # bce_elem = F.binary_cross_entropy(expected_open_prob, torch.full_like(expected_open_prob, rho), reduction="none")
-        # revkl_loss = bce_elem.sum(dim=-1).mean()
-
-        # q_bar = expected_open_prob.mean(dim=(0,1))                        # (D,)
-        # lifetime_loss = F.binary_cross_entropy(q_bar, torch.full_like(q_bar, rho))
-        # l0_loss = expected_open_prob.sum(dim=-1).mean() / self.input_size
-        # # l1_loss = (output.z * output.magnitude.abs()).mean()
-        # # kl_loss = kl_to_target(expected_open_prob, 0.005)
-        # expected_K = (expected_open_prob * self.n_dict_components).sum(dim=-1).mean()
-
-        # # sparsity_coeff = self.sparsity_coeff * cosine_ramp(self.train_progress, 0.1)
-        # # sparsity_loss = 1 * revkl_loss + 0.1 * lifetime_loss
-        # tau = 1e-3
+        sparsity_loss = self.calc_l0_loss(logits=output.logits)
         mse_loss = F.mse_loss(output.output, output.input)
-        loss = self.sparsity_coeff * l0_loss + self.mse_coeff * mse_loss
-        loss_dict = {
-            "mse_loss": mse_loss.detach().clone(),
-            "sparsity_loss": l0_loss.detach().clone(),
-            # "sparsity_coeff": sparsity_coeff.detach().clone(),
-            # "revkl_loss": revkl_loss.detach().clone(),
-            # "lifetime_loss": lifetime_loss.detach().clone(),
-            # "expected_K": expected_K.detach().clone(),
-        }
-        return SAELoss(loss=loss, loss_dict=loss_dict)
+        loss = self.sparsity_coeff * sparsity_loss + self.mse_coeff * mse_loss
+        return SAELoss(
+            loss=loss,
+            loss_dict={
+                "mse_loss": mse_loss.detach().clone(),
+                "sparsity_loss": sparsity_loss.detach().clone(),
+            },
+        )
 
     @property
     def dict_elements(self):
