@@ -161,14 +161,14 @@ class TopKSAE(BaseSAE):
         x_hat = F.linear(c, self.dict_elements, bias=self.decoder_bias)
         return TopKSAEOutput(input=x, c=c, output=x_hat, logits=None, preacts=preacts, mask=mask)
     
-    def sample_hard_concrete(self, log_alpha: torch.Tensor, tau: float = 0.5,
-                             limit_a: float = -0.1, limit_b: float = 1.1):
-        # Maddison/Jang (Concrete) + Louizos et al. (Hard-Concrete)
-        u = torch.rand_like(log_alpha).clamp_(1e-6, 1-1e-6)
-        s = torch.sigmoid((log_alpha + torch.log(u) - torch.log(1 - u)) / tau)
-        s_bar = s * (limit_b - limit_a) + limit_a
-        z = s_bar.clamp(0.0, 1.0)  # gate in [0,1]
-        return z
+    # def sample_hard_concrete(self, log_alpha: torch.Tensor, tau: float = 0.5,
+    #                          limit_a: float = -0.1, limit_b: float = 1.1):
+    #     # Maddison/Jang (Concrete) + Louizos et al. (Hard-Concrete)
+    #     u = torch.rand_like(log_alpha).clamp_(1e-6, 1-1e-6)
+    #     s = torch.sigmoid((log_alpha + torch.log(u) - torch.log(1 - u)) / tau)
+    #     s_bar = s * (limit_b - limit_a) + limit_a
+    #     z = s_bar.clamp(0.0, 1.0)  # gate in [0,1]
+    #     return z
 
     def compute_loss(self, output: TopKSAEOutput) -> SAELoss:
         """
