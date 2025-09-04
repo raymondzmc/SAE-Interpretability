@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import Field, model_validator
 from models.saes.base import SAEConfig, SAEOutput, SAELoss, BaseSAE
 from utils.enums import SAEType
-from models.saes.activations import ACTIVATION_MAP
+from models.saes.activations import get_activation
 
 
 class LagrangianHardConcreteSAEConfig(SAEConfig):
@@ -77,7 +77,7 @@ class LagrangianHardConcreteSAE(BaseSAE):
 
         self.encoder_layer_norm = torch.nn.LayerNorm(input_size, elementwise_affine=False)
         self.gate_encoder = torch.nn.Linear(input_size, n_dict_components, bias=False)
-        self.magnitude_activation = ACTIVATION_MAP.get((magnitude_activation or "none").lower())
+        self.magnitude_activation = get_activation(magnitude_activation or "none")
         self.r_mag = torch.nn.Parameter(torch.zeros(n_dict_components))
         self.mag_bias = torch.nn.Parameter(torch.zeros(n_dict_components))
 
