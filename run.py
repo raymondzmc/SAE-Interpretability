@@ -235,14 +235,14 @@ def train(
         loss /= config.gradient_accumulation_steps
         loss.backward()
 
-        # VI SAE dual update (before optimizer step)
-        if config.saes.sae_type == SAEType.VI_TOPK:
-            with torch.no_grad():
-                for sae_name, sae_output in output.sae_outputs.items():
-                    sae = model.saes[sae_name.replace(".", "-")]
-                    if isinstance(sae, VITopKSAE):
-                        gap = sae_output.p.sum(dim=-1).mean() - sae.k  # E_batch[sum_i p_i] - K
-                        sae.update_dual(gap)
+        # # VI SAE dual update (before optimizer step)
+        # if config.saes.sae_type == SAEType.VI_TOPK:
+        #     with torch.no_grad():
+        #         for sae_name, sae_output in output.sae_outputs.items():
+        #             sae = model.saes[sae_name.replace(".", "-")]
+        #             if isinstance(sae, VITopKSAE):
+        #                 gap = sae_output.p.sum(dim=-1).mean() - sae.k  # E_batch[sum_i p_i] - K
+        #                 sae.update_dual(gap)
 
         if is_grad_step:
             if config.max_grad_norm is not None:
