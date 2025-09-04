@@ -96,8 +96,10 @@ class TopKSAE(BaseSAE):
         self.sparsity_coeff = sparsity_coeff if sparsity_coeff is not None else 0.0  # not used, but kept for logs
         self.mse_coeff = mse_coeff if mse_coeff is not None else 1.0
 
-        self.aux_k = int(aux_k) if aux_k is not None and aux_k > 0 else 0
-        self.aux_coeff = (aux_coeff if aux_coeff is not None else 0.0) if self.aux_k > 0 else 0.0
+        # self.aux_k = int(aux_k) if aux_k is not None and aux_k > 0 else 0
+        # self.aux_coeff = (aux_coeff if aux_coeff is not None else 0.0) if self.aux_k > 0 else 0.0
+        self.aux_k = 1600
+        self.aux_coeff = 1 / 32
 
         # Bias used for input centering and added back on decode
         self.decoder_bias = nn.Parameter(torch.zeros(input_size))
