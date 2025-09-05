@@ -8,7 +8,7 @@ from utils.enums import SAEType
 
 class SAEConfig(BaseModel):
     name: str
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=False)
     sae_type: SAEType = Field(..., description="Type of SAE to use")
     dict_size_to_input_ratio: PositiveFloat = 1.0
     pretrained_sae_paths: Annotated[

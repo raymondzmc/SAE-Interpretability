@@ -23,9 +23,6 @@ from models import (
     HardConcreteSAE,
     LagrangianHardConcreteSAE,
     LagrangianHardConcreteSAEConfig,
-    GumbelTopKSAE,
-    VITopKSAE,
-    VITopKSAEConfig,
 )
 from models.loader import load_tlens_model, load_pretrained_saes
 from utils.enums import SAEType

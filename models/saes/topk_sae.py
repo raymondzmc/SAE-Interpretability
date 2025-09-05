@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from typing import Any
-from pydantic import Field, ConfigDict, model_validator
+from pydantic import Field, model_validator
 from jaxtyping import Float
 
 from models.saes.base import BaseSAE, SAELoss, SAEOutput, SAEConfig
@@ -22,8 +22,6 @@ class TopKSAEConfig(SAEConfig):
     - (Optional) Auxiliary loss to mitigate dead features by giving gradient signal
       to non-selected latents (implements a simple Aux-K).
     """
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
     sae_type: SAEType = Field(default=SAEType.TOPK, description="Type of SAE (automatically set to topk)")
     k: int = Field(..., description="Number of active features to keep per sample")
     tied_encoder_init: bool = Field(True, description="Initialize encoder as decoder.T")

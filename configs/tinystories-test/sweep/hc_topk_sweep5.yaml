@@ -1,0 +1,7 @@
+# ReLU SAE Hyperparameter Sweep Configuration
+
+# Sparsity coefficient sweep  
+k: [8, 16, 32, 64]
+initial_beta: [5.0, 10.0, 20.0]
+score_method: ["magnitude_detached"]
+straight_through: [False]

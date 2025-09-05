@@ -26,6 +26,9 @@ from models.saes import (
     VITopKSAE,
     VITopKSAEConfig,
     VITopKSAEOutput,
+    HardConcreteTopKSAE,
+    HardConcreteTopKSAEConfig,
+    HardConcreteTopKSAEOutput,
     create_sae_config,
 )
 from models.transformer import SAETransformer, SAETransformerOutput
@@ -59,6 +62,9 @@ __all__ = [
     "VITopKSAE",
     "VITopKSAEConfig", 
     "VITopKSAEOutput",
+    "HardConcreteTopKSAE",
+    "HardConcreteTopKSAEConfig",
+    "HardConcreteTopKSAEOutput",
     "create_sae_config",
     "load_tlens_model",
     "load_pretrained_saes",

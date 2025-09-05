@@ -62,7 +62,8 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
     # Collect data by SAE type - updated for the new run types
     data = {
         'gated': [],  # previously "scale"
-        'ours': [],   # runs with "tied_encoder"
+        'ours': [],   # runs with "ours"
+        'relu': [],   # runs with "relu"
         'topk': []
     }
     
@@ -74,11 +75,13 @@ def collect_all_metrics_data(projects: List[str] = None) -> Dict[str, List[Dict]
         
         # Determine SAE type based on run name patterns - updated logic
         sae_type = None
-        if 'tied_encoder' in name_lower:
+        if 'ours' in name_lower:
             sae_type = 'ours'
+        elif 'relu' in name_lower:
+            sae_type = 'relu'
         elif 'scale' in name_lower:
             sae_type = 'gated'
-        elif ('topk' in name_lower or 'top-k' in name_lower or 'top_k' in name_lower) and 'tied_encoder' not in name_lower:
+        elif ('topk' in name_lower or 'top-k' in name_lower or 'top_k' in name_lower):
             sae_type = 'topk'
         else:
             continue  # Skip other types
@@ -227,6 +230,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
     colors = {
         'gated': '#2ca02c',                           # Green
         'ours': '#1f77b4',                            # Blue
+        'relu': '#9467bd',                            # Purple
         'topk': '#d62728'                             # Red
     }
     
@@ -234,6 +238,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
     markers = {
         'gated': '^',                                 # Triangle up
         'ours': 'o',                                  # Circle
+        'relu': 's',                                  # Square
         'topk': 'v'                                   # Triangle down
     }
     
@@ -241,6 +246,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
     labels = {
         'gated': 'Gated',
         'ours': 'Ours',
+        'relu': 'ReLU',
         'topk': 'Top-K'
     }
     
@@ -258,7 +264,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 1: MSE vs L0 (minimize both)
         ax1 = axes[0]
-        for sae_type in ['gated', 'ours', 'topk']:
+        for sae_type in ['gated', 'ours', 'relu', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -348,7 +354,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 2: Explained Variance vs L0 (minimize L0, maximize explained variance)
         ax2 = axes[1]
-        for sae_type in ['gated', 'ours', 'topk']:
+        for sae_type in ['gated', 'ours', 'relu', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -434,7 +440,7 @@ def plot_all_pareto_curves(data: Dict[str, List[Dict]], layers: List[str],
         
         # Plot 3: Alive Dictionary Elements vs L0
         ax3 = axes[2]
-        for sae_type in ['gated', 'ours', 'topk']:
+        for sae_type in ['gated', 'ours', 'relu', 'topk']:
             if data.get(sae_type):
                 # Extract layer-specific data WITH FILTERING
                 l0_values = []
@@ -568,6 +574,7 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
     display_names = {
         'gated': 'Gated',
         'ours': 'Ours',
+        'relu': 'ReLU',
         'topk': 'Top-K'
     }
     
@@ -576,7 +583,7 @@ def print_pareto_summary(data: Dict[str, List[Dict]], layers: List[str],
         print(f"LAYER: {layer_name}")
         print(f"{'='*80}")
         
-        for sae_type in ['gated', 'ours', 'topk']:
+        for sae_type in ['gated', 'ours', 'relu', 'topk']:
             if not data.get(sae_type):
                 continue
             
@@ -640,7 +647,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Plot Pareto curves for SAE types: gated (scale), ours (tied_encoder), and topk"
+        description="Plot Pareto curves for SAE types: gated (scale), ours (ours), relu (relu), and topk"
     )
     parser.add_argument(
         "--projects",

@@ -9,8 +9,10 @@ from models.saes.gated_sae import (
 from models.saes.gumbel_topk_sae import GumbelTopKSAE, GumbelTopKSAEConfig, GumbelTopKSAEOutput
 from models.saes.topk_sae import TopKSAE, TopKSAEConfig, TopKSAEOutput
 from models.saes.vi_sae import VITopKSAE, VITopKSAEConfig, VITopKSAEOutput
+from models.saes.hc_topk_sae import HardConcreteTopKSAE, HardConcreteTopKSAEConfig, HardConcreteTopKSAEOutput
 from utils.enums import SAEType
-from typing import Any
+from typing import Any, Union
+import inspect
 
 
 def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
@@ -47,13 +49,18 @@ def create_sae_config(config_dict: dict[str, Any]) -> SAEConfig:
         return GumbelTopKSAEConfig.model_validate(config_dict)
     elif sae_type == SAEType.VI_TOPK:
         return VITopKSAEConfig.model_validate(config_dict)
+    elif sae_type == SAEType.HARD_CONCRETE_TOPK:
+        return HardConcreteTopKSAEConfig.model_validate(config_dict)
     else:
         raise NotImplementedError(f"SAE type '{sae_type}' is not supported")
 
 
-# Keep track of available SAE types for validation
-AVAILABLE_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK, SAEType.GUMBEL_TOPK, SAEType.VI_TOPK}
-IMPLEMENTED_SAE_TYPES = {SAEType.RELU, SAEType.HARD_CONCRETE, SAEType.LAGRANGIAN_HARD_CONCRETE, SAEType.GATED, SAEType.GATED_HARD_CONCRETE, SAEType.TOPK, SAEType.GUMBEL_TOPK, SAEType.VI_TOPK}
+ALL_SAE_CONFIGS = [
+    cls for name, cls in globals().items() 
+    if inspect.isclass(cls) and issubclass(cls, SAEConfig) and cls is not SAEConfig
+]
+# Union type for type annotations
+AllSAEConfigs = Union[*ALL_SAE_CONFIGS]
 
 
 __all__ = [
@@ -84,7 +91,9 @@ __all__ = [
     "VITopKSAE",
     "VITopKSAEConfig", 
     "VITopKSAEOutput",
+    "HardConcreteTopKSAE",
+    "HardConcreteTopKSAEConfig",
+    "HardConcreteTopKSAEOutput",
     "create_sae_config",
-    "AVAILABLE_SAE_TYPES",
-    "IMPLEMENTED_SAE_TYPES",
+    "AllSAEConfigs",
 ]

@@ -7,6 +7,6 @@ CUDA_VISIBLE_DEVICES=0 python run_experiments.py \
 --sweep_config configs/tinystories-test/sweep/topk_sweep.yaml \
 --output_dir experiment_outputs/topk_sweep
 
-CUDA_VISIBLE_DEVICES=0 python evaluation.py \
+CUDA_VISIBLE_DEVICES=3 python evaluation.py \
 --wandb_project raymondl/tinystories-1m-test \
---filter_runs_by_name tied_encoder_init
+--filter_runs_by_name topk
